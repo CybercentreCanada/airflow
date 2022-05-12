@@ -18,14 +18,16 @@
 import json
 import warnings
 from collections import OrderedDict
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence
 
 from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
 from airflow.providers.apache.hive.hooks.hive import HiveMetastoreHook
 from airflow.providers.mysql.hooks.mysql import MySqlHook
 from airflow.providers.presto.hooks.presto import PrestoHook
-from airflow.utils.decorators import apply_defaults
+
+if TYPE_CHECKING:
+    from airflow.utils.context import Context
 
 
 class HiveStatsCollectionOperator(BaseOperator):
@@ -41,46 +43,44 @@ class HiveStatsCollectionOperator(BaseOperator):
             value BIGINT
         );
 
+    :param metastore_conn_id: Reference to the
+        :ref:`Hive Metastore connection id <howto/connection:hive_metastore>`.
     :param table: the source table, in the format ``database.table_name``. (templated)
-    :type table: str
     :param partition: the source partition. (templated)
-    :type partition: dict of {col:value}
     :param extra_exprs: dict of expression to run against the table where
         keys are metric names and values are Presto compatible expressions
-    :type extra_exprs: dict
     :param excluded_columns: list of columns to exclude, consider
         excluding blobs, large json columns, ...
-    :type excluded_columns: list
     :param assignment_func: a function that receives a column name and
         a type, and returns a dict of metric names and an Presto expressions.
         If None is returned, the global defaults are applied. If an
         empty dictionary is returned, no stats are computed for that
         column.
-    :type assignment_func: function
     """
 
-    template_fields = ('table', 'partition', 'ds', 'dttm')
+    template_fields: Sequence[str] = ('table', 'partition', 'ds', 'dttm')
     ui_color = '#aff7a6'
 
-    @apply_defaults
-    def __init__(self,
-                 table: str,
-                 partition: Any,
-                 extra_exprs: Optional[Dict[str, Any]] = None,
-                 excluded_columns: Optional[List[str]] = None,
-                 assignment_func: Optional[Callable[[str, str], Optional[Dict[Any, Any]]]] = None,
-                 metastore_conn_id: str = 'metastore_default',
-                 presto_conn_id: str = 'presto_default',
-                 mysql_conn_id: str = 'airflow_db',
-                 **kwargs: Any
-                 ) -> None:
+    def __init__(
+        self,
+        *,
+        table: str,
+        partition: Any,
+        extra_exprs: Optional[Dict[str, Any]] = None,
+        excluded_columns: Optional[List[str]] = None,
+        assignment_func: Optional[Callable[[str, str], Optional[Dict[Any, Any]]]] = None,
+        metastore_conn_id: str = 'metastore_default',
+        presto_conn_id: str = 'presto_default',
+        mysql_conn_id: str = 'airflow_db',
+        **kwargs: Any,
+    ) -> None:
         if 'col_blacklist' in kwargs:
             warnings.warn(
-                'col_blacklist kwarg passed to {c} (task_id: {t}) is deprecated, please rename it to '
-                'excluded_columns instead'.format(
-                    c=self.__class__.__name__, t=kwargs.get('task_id')),
+                f"col_blacklist kwarg passed to {self.__class__.__name__} "
+                f"(task_id: {kwargs.get('task_id')}) is deprecated, "
+                f"please rename it to excluded_columns instead",
                 category=FutureWarning,
-                stacklevel=2
+                stacklevel=2,
             )
             excluded_columns = kwargs.pop('col_blacklist')
         super().__init__(**kwargs)
@@ -96,9 +96,7 @@ class HiveStatsCollectionOperator(BaseOperator):
         self.dttm = '{{ execution_date.isoformat() }}'
 
     def get_default_exprs(self, col: str, col_type: str) -> Dict[Any, Any]:
-        """
-        Get default expressions
-        """
+        """Get default expressions"""
         if col in self.excluded_columns:
             return {}
         exp = {(col, 'non_null'): f"COUNT({col})"}
@@ -116,14 +114,12 @@ class HiveStatsCollectionOperator(BaseOperator):
 
         return exp
 
-    def execute(self, context: Optional[Dict[str, Any]] = None) -> None:
+    def execute(self, context: "Context") -> None:
         metastore = HiveMetastoreHook(metastore_conn_id=self.metastore_conn_id)
         table = metastore.get_table(table_name=self.table)
         field_types = {col.name: col.type for col in table.sd.cols}
 
-        exprs: Any = {
-            ('', 'count'): 'COUNT(*)'
-        }
+        exprs: Any = {('', 'count'): 'COUNT(*)'}
         for col, col_type in list(field_types.items()):
             if self.assignment_func:
                 assign_exprs = self.assignment_func(col, col_type)
@@ -134,14 +130,11 @@ class HiveStatsCollectionOperator(BaseOperator):
             exprs.update(assign_exprs)
         exprs.update(self.extra_exprs)
         exprs = OrderedDict(exprs)
-        exprs_str = ",\n        ".join([
-            v + " AS " + k[0] + '__' + k[1]
-            for k, v in exprs.items()])
+        exprs_str = ",\n        ".join(v + " AS " + k[0] + '__' + k[1] for k, v in exprs.items())
 
-        where_clause_ = ["{} = '{}'".format(k, v) for k, v in self.partition.items()]
+        where_clause_ = [f"{k} = '{v}'" for k, v in self.partition.items()]
         where_clause = " AND\n        ".join(where_clause_)
-        sql = "SELECT {exprs_str} FROM {table} WHERE {where_clause};".format(
-            exprs_str=exprs_str, table=self.table, where_clause=where_clause)
+        sql = f"SELECT {exprs_str} FROM {self.table} WHERE {where_clause};"
 
         presto = PrestoHook(presto_conn_id=self.presto_conn_id)
         self.log.info('Executing SQL check: %s', sql)
@@ -154,27 +147,28 @@ class HiveStatsCollectionOperator(BaseOperator):
 
         self.log.info("Deleting rows from previous runs if they exist")
         mysql = MySqlHook(self.mysql_conn_id)
-        sql = """
+        sql = f"""
         SELECT 1 FROM hive_stats
         WHERE
-            table_name='{table}' AND
+            table_name='{self.table}' AND
             partition_repr='{part_json}' AND
-            dttm='{dttm}'
+            dttm='{self.dttm}'
         LIMIT 1;
-        """.format(table=self.table, part_json=part_json, dttm=self.dttm)
+        """
         if mysql.get_records(sql):
-            sql = """
+            sql = f"""
             DELETE FROM hive_stats
             WHERE
-                table_name='{table}' AND
+                table_name='{self.table}' AND
                 partition_repr='{part_json}' AND
-                dttm='{dttm}';
-            """.format(table=self.table, part_json=part_json, dttm=self.dttm)
+                dttm='{self.dttm}';
+            """
             mysql.run(sql)
 
         self.log.info("Pivoting and loading cells into the Airflow db")
-        rows = [(self.ds, self.dttm, self.table, part_json) + (r[0][0], r[0][1], r[1])
-                for r in zip(exprs, row)]
+        rows = [
+            (self.ds, self.dttm, self.table, part_json) + (r[0][0], r[0][1], r[1]) for r in zip(exprs, row)
+        ]
         mysql.insert_rows(
             table='hive_stats',
             rows=rows,
@@ -186,5 +180,5 @@ class HiveStatsCollectionOperator(BaseOperator):
                 'col',
                 'metric',
                 'value',
-            ]
+            ],
         )

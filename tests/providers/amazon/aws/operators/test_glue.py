@@ -1,5 +1,3 @@
-
-
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -18,37 +16,71 @@
 # under the License.
 
 import unittest
+from unittest import mock
 
-import mock
+from parameterized import parameterized
 
 from airflow import configuration
-from airflow.providers.amazon.aws.hooks.glue import AwsGlueJobHook
+from airflow.providers.amazon.aws.hooks.glue import GlueJobHook
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
-from airflow.providers.amazon.aws.operators.glue import AwsGlueJobOperator
+from airflow.providers.amazon.aws.operators.glue import GlueJobOperator
 
 
-class TestAwsGlueJobOperator(unittest.TestCase):
-
-    @mock.patch('airflow.providers.amazon.aws.hooks.glue.AwsGlueJobHook')
+class TestGlueJobOperator(unittest.TestCase):
+    @mock.patch('airflow.providers.amazon.aws.hooks.glue.GlueJobHook')
     def setUp(self, glue_hook_mock):
         configuration.load_test_config()
 
         self.glue_hook_mock = glue_hook_mock
-        some_script = "s3:/glue-examples/glue-scripts/sample_aws_glue_job.py"
-        self.glue = AwsGlueJobOperator(task_id='test_glue_operator',
-                                       job_name='my_test_job',
-                                       script_location=some_script,
-                                       aws_conn_id='aws_default',
-                                       region_name='us-west-2',
-                                       s3_bucket='some_bucket',
-                                       iam_role_name='my_test_role')
 
-    @mock.patch.object(AwsGlueJobHook, 'initialize_job')
-    @mock.patch.object(AwsGlueJobHook, "get_conn")
+    @parameterized.expand(
+        [
+            "s3://glue-examples/glue-scripts/sample_aws_glue_job.py",
+            "/glue-examples/glue-scripts/sample_aws_glue_job.py",
+        ]
+    )
+    @mock.patch.object(GlueJobHook, 'get_job_state')
+    @mock.patch.object(GlueJobHook, 'initialize_job')
+    @mock.patch.object(GlueJobHook, "get_conn")
     @mock.patch.object(S3Hook, "load_file")
-    def test_execute_without_failure(self, mock_load_file, mock_get_conn, mock_initialize_job):
+    def test_execute_without_failure(
+        self, script_location, mock_load_file, mock_get_conn, mock_initialize_job, mock_get_job_state
+    ):
+        glue = GlueJobOperator(
+            task_id='test_glue_operator',
+            job_name='my_test_job',
+            script_location=script_location,
+            aws_conn_id='aws_default',
+            region_name='us-west-2',
+            s3_bucket='some_bucket',
+            iam_role_name='my_test_role',
+        )
         mock_initialize_job.return_value = {'JobRunState': 'RUNNING', 'JobRunId': '11111'}
-        self.glue.execute(None)
+        mock_get_job_state.return_value = 'SUCCEEDED'
+        glue.execute({})
+        mock_initialize_job.assert_called_once_with({}, {})
+        assert glue.job_name == 'my_test_job'
 
-        mock_initialize_job.assert_called_once_with({})
-        self.assertEqual(self.glue.job_name, 'my_test_job')
+    @mock.patch.object(GlueJobHook, 'job_completion')
+    @mock.patch.object(GlueJobHook, 'initialize_job')
+    @mock.patch.object(GlueJobHook, "get_conn")
+    @mock.patch.object(S3Hook, "load_file")
+    def test_execute_without_waiting_for_completion(
+        self, mock_load_file, mock_get_conn, mock_initialize_job, mock_job_completion
+    ):
+        glue = GlueJobOperator(
+            task_id='test_glue_operator',
+            job_name='my_test_job',
+            script_location='s3://glue-examples/glue-scripts/sample_aws_glue_job.py',
+            aws_conn_id='aws_default',
+            region_name='us-west-2',
+            s3_bucket='some_bucket',
+            iam_role_name='my_test_role',
+            wait_for_completion=False,
+        )
+        mock_initialize_job.return_value = {'JobRunState': 'RUNNING', 'JobRunId': '11111'}
+        job_run_id = glue.execute({})
+        mock_initialize_job.assert_called_once_with({}, {})
+        mock_job_completion.assert_not_called()
+        assert glue.job_name == 'my_test_job'
+        assert job_run_id == '11111'

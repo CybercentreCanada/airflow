@@ -15,20 +15,25 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-Platform and system specific function.
-"""
+"""Platform and system specific function."""
+import getpass
 import logging
 import os
 import pkgutil
+import platform
 import sys
+
+from airflow.compat.functools import cache
+
+IS_WINDOWS = platform.system() == 'Windows'
 
 log = logging.getLogger(__name__)
 
 
 def is_tty():
     """
-    Checks if the standard output is s connected (is associated with a terminal device) to a tty(-like) device
+    Checks if the standard output is connected (is associated with a terminal device) to a tty(-like)
+    device.
     """
     if not hasattr(sys.stdout, "isatty"):
         return False
@@ -36,9 +41,7 @@ def is_tty():
 
 
 def is_terminal_support_colors() -> bool:
-    """
-    Try to determine if the current terminal supports colors.
-    """
+    """Try to determine if the current terminal supports colors."""
     if sys.platform == "win32":
         return False
     if not is_tty():
@@ -56,7 +59,30 @@ def get_airflow_git_version():
     git_version = None
     try:
         git_version = str(pkgutil.get_data('airflow', 'git_version'), encoding="UTF-8")
-    except Exception as e:  # pylint: disable=broad-except
-        log.error(e)
+    except Exception as e:
+        log.debug(e)
 
     return git_version
+
+
+@cache
+def getuser() -> str:
+    """
+    Gets the username associated with the current user, or error with a nice
+    error message if there's no current user.
+
+    We don't want to fall back to os.getuid() because not having a username
+    probably means the rest of the user environment is wrong (e.g. no $HOME).
+    Explicit failure is better than silently trying to work badly.
+    """
+    try:
+        return getpass.getuser()
+    except KeyError:
+        # Inner import to avoid circular import
+        from airflow.exceptions import AirflowConfigException
+
+        raise AirflowConfigException(
+            "The user that Airflow is running as has no username; you must run"
+            "Airflow as a full user, with a username and home directory, "
+            "in order for it to function properly."
+        )

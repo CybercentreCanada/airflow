@@ -16,32 +16,32 @@
 # under the License.
 
 import logging
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
-from cached_property import cached_property
+from sqlalchemy.orm.session import Session
 
+from airflow.compat.functools import cached_property
 from airflow.configuration import conf
-from airflow.models import TaskInstance
+from airflow.models.taskinstance import TaskInstance
 from airflow.utils.helpers import render_log_filename
 from airflow.utils.log.logging_mixin import ExternalLoggingMixin
+from airflow.utils.session import NEW_SESSION, provide_session
 
 
 class TaskLogReader:
-    """ Task log reader"""
+    """Task log reader"""
 
-    def read_log_chunks(self, ti: TaskInstance, try_number: Optional[int],
-                        metadata) -> Tuple[List[str], Dict[str, Any]]:
+    def read_log_chunks(
+        self, ti: TaskInstance, try_number: Optional[int], metadata
+    ) -> Tuple[List[Tuple[Tuple[str, str]]], Dict[str, str]]:
         """
         Reads chunks of Task Instance logs.
 
         :param ti: The taskInstance
-        :type ti: TaskInstance
         :param try_number: If provided, logs for the given try will be returned.
             Otherwise, logs from all attempts are returned.
-        :type try_number: Optional[int]
         :param metadata: A dictionary containing information about how to read the task log
-        :type metadata: dict
-        :rtype: Tuple[List[str], Dict[str, Any]]
+        :rtype: Tuple[List[Tuple[Tuple[str, str]]], Dict[str, str]]
 
         The following is an example of how to use this method to read log:
 
@@ -54,25 +54,19 @@ class TaskLogReader:
         contain information about the task log which can enable you read logs to the
         end.
         """
-
         logs, metadatas = self.log_handler.read(ti, try_number, metadata=metadata)
         metadata = metadatas[0]
         return logs, metadata
 
-    def read_log_stream(self, ti: TaskInstance, try_number: Optional[int],
-                        metadata: dict) -> Iterator[str]:
+    def read_log_stream(self, ti: TaskInstance, try_number: Optional[int], metadata: dict) -> Iterator[str]:
         """
         Used to continuously read log to the end
 
         :param ti: The Task Instance
-        :type ti: TaskInstance
         :param try_number: the task try number
-        :type try_number: Optional[int]
         :param metadata: A dictionary containing information about how to read the task log
-        :type metadata: dict
         :rtype: Iterator[str]
         """
-
         if try_number is None:
             next_try = ti.next_try_number
             try_numbers = list(range(1, next_try))
@@ -84,12 +78,12 @@ class TaskLogReader:
             metadata.pop('offset', None)
             while 'end_of_log' not in metadata or not metadata['end_of_log']:
                 logs, metadata = self.read_log_chunks(ti, current_try_number, metadata)
-                yield "\n".join(logs) + "\n"
+                for host, log in logs[0]:
+                    yield "\n".join([host or '', log]) + "\n"
 
     @cached_property
     def log_handler(self):
         """Log handler, which is configured to read logs."""
-
         logger = logging.getLogger('airflow.task')
         task_log_reader = conf.get('logging', 'task_log_reader')
         handler = next((handler for handler in logger.handlers if handler.name == task_log_reader), None)
@@ -98,28 +92,35 @@ class TaskLogReader:
     @property
     def supports_read(self):
         """Checks if a read operation is supported by a current log handler."""
-
         return hasattr(self.log_handler, 'read')
 
     @property
-    def supports_external_link(self):
+    def supports_external_link(self) -> bool:
         """Check if the logging handler supports external links (e.g. to Elasticsearch, Stackdriver, etc)."""
-        return isinstance(self.log_handler, ExternalLoggingMixin)
+        if not isinstance(self.log_handler, ExternalLoggingMixin):
+            return False
 
-    def render_log_filename(self, ti: TaskInstance, try_number: Optional[int] = None):
+        return self.log_handler.supports_external_link
+
+    @provide_session
+    def render_log_filename(
+        self,
+        ti: TaskInstance,
+        try_number: Optional[int] = None,
+        *,
+        session: Session = NEW_SESSION,
+    ):
         """
         Renders the log attachment filename
 
         :param ti: The task instance
-        :type ti: TaskInstance
         :param try_number: The task try number
-        :type try_number: Optional[int]
         :rtype: str
         """
-
-        filename_template = conf.get('logging', 'LOG_FILENAME_TEMPLATE')
+        dagrun = ti.get_dagrun(session=session)
         attachment_filename = render_log_filename(
             ti=ti,
             try_number="all" if try_number is None else try_number,
-            filename_template=filename_template)
+            filename_template=dagrun.get_log_filename_template(session=session),
+        )
         return attachment_filename

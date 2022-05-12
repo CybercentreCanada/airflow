@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import mock
+from unittest import mock
 
 from airflow.providers.google.suite.operators.sheets import GoogleSheetsCreateSpreadsheetOperator
 
@@ -39,14 +39,9 @@ class TestGoogleSheetsCreateSpreadsheet:
         op = GoogleSheetsCreateSpreadsheetOperator(
             task_id="test_task", spreadsheet=spreadsheet, gcp_conn_id=GCP_CONN_ID
         )
-        op.execute(context)
+        op_execute_result = op.execute(context)
 
-        mock_hook.return_value.create_spreadsheet.assert_called_once_with(
-            spreadsheet=spreadsheet
-        )
+        mock_hook.return_value.create_spreadsheet.assert_called_once_with(spreadsheet=spreadsheet)
 
-        calls = [
-            mock.call(context, "spreadsheet_id", SPREADSHEET_ID),
-            mock.call(context, "spreadsheet_url", SPREADSHEET_URL),
-        ]
-        mock_xcom.has_calls(calls)
+        assert op_execute_result['spreadsheetId'] == '1234567890'
+        assert op_execute_result['spreadsheetUrl'] == 'https://example/sheets'

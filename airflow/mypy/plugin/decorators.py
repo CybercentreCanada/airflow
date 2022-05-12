@@ -20,19 +20,21 @@ import copy
 import functools
 from typing import List
 
-from mypy.nodes import ARG_NAMED_OPT  # pylint: disable=no-name-in-module
-from mypy.plugin import FunctionContext, Plugin  # pylint: disable=no-name-in-module
-from mypy.types import CallableType, NoneType, UnionType  # pylint: disable=no-name-in-module
+from mypy.nodes import ARG_NAMED_OPT
+from mypy.plugin import FunctionContext, Plugin
+from mypy.types import CallableType, NoneType, UnionType
 
 TYPED_DECORATORS = {
-    "fallback_to_default_project_id of GoogleBaseHook": ["project_id"],
+    "airflow.utils.session.provide_session": [],
     "airflow.providers.google.cloud.hooks.dataflow._fallback_to_project_id_from_variables": ["project_id"],
+    "fallback_to_default_project_id of GoogleBaseHook": ["project_id"],
     "provide_gcp_credential_file of GoogleBaseHook": [],
 }
 
 
 class TypedDecoratorPlugin(Plugin):
     """Mypy plugin for typed decorators."""
+
     def get_function_hook(self, fullname: str):
         """Check for known typed decorators by name."""
         if fullname in TYPED_DECORATORS:
@@ -74,6 +76,6 @@ def _change_decorator_function_type(
     return decorator
 
 
-def plugin(version: str):  # pylint: disable=unused-argument
+def plugin(version: str):
     """Mypy plugin entrypoint."""
     return TypedDecoratorPlugin

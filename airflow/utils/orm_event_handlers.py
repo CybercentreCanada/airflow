@@ -29,23 +29,23 @@ log = logging.getLogger(__name__)
 
 
 def setup_event_handlers(engine):
-    """
-    Setups event handlers.
-    """
-    # pylint: disable=unused-argument, unused-variable
+    """Setups event handlers."""
+
     @event.listens_for(engine, "connect")
     def connect(dbapi_connection, connection_record):
         connection_record.info['pid'] = os.getpid()
 
     if engine.dialect.name == "sqlite":
+
         @event.listens_for(engine, "connect")
         def set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
 
-    # this ensures sanity in mysql when storing datetimes (not required for postgres)
+    # this ensures coherence in mysql when storing datetimes (not required for postgres)
     if engine.dialect.name == "mysql":
+
         @event.listens_for(engine, "connect")
         def set_mysql_timezone(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
@@ -58,24 +58,31 @@ def setup_event_handlers(engine):
         if connection_record.info['pid'] != pid:
             connection_record.connection = connection_proxy.connection = None
             raise exc.DisconnectionError(
-                "Connection record belongs to pid {}, "
-                "attempting to check out in pid {}".format(connection_record.info['pid'], pid)
+                f"Connection record belongs to pid {connection_record.info['pid']}, "
+                f"attempting to check out in pid {pid}"
             )
+
     if conf.getboolean('debug', 'sqlalchemy_stats', fallback=False):
+
         @event.listens_for(engine, "before_cursor_execute")
         def before_cursor_execute(conn, cursor, statement, parameters, context, executemany):
-            conn.info.setdefault('query_start_time', []).append(time.time())
+            conn.info.setdefault('query_start_time', []).append(time.perf_counter())
 
         @event.listens_for(engine, "after_cursor_execute")
         def after_cursor_execute(conn, cursor, statement, parameters, context, executemany):
-            total = time.time() - conn.info['query_start_time'].pop()
+            total = time.perf_counter() - conn.info['query_start_time'].pop()
             file_name = [
-                f"'{f.name}':{f.filename}:{f.lineno}" for f
-                in traceback.extract_stack() if 'sqlalchemy' not in f.filename][-1]
+                f"'{f.name}':{f.filename}:{f.lineno}"
+                for f in traceback.extract_stack()
+                if 'sqlalchemy' not in f.filename
+            ][-1]
             stack = [f for f in traceback.extract_stack() if 'sqlalchemy' not in f.filename]
             stack_info = ">".join([f"{f.filename.rpartition('/')[-1]}:{f.name}" for f in stack][-3:])
             conn.info.setdefault('query_start_time', []).append(time.monotonic())
-            log.info("@SQLALCHEMY %s |$ %s |$ %s |$  %s ",
-                     total, file_name, stack_info, statement.replace("\n", " ")
-                     )
-    # pylint: enable=unused-argument, unused-variable
+            log.info(
+                "@SQLALCHEMY %s |$ %s |$ %s |$  %s ",
+                total,
+                file_name,
+                stack_info,
+                statement.replace("\n", " "),
+            )

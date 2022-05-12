@@ -17,12 +17,12 @@
 # under the License.
 import os
 import unittest
+from unittest import mock
 
-import mock
 from moto import mock_s3
 
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
-from airflow.providers.amazon.aws.operators.s3_bucket import S3CreateBucketOperator, S3DeleteBucketOperator
+from airflow.providers.amazon.aws.operators.s3 import S3CreateBucketOperator, S3DeleteBucketOperator
 
 BUCKET_NAME = os.environ.get("BUCKET_NAME", "test-airflow-bucket")
 TASK_ID = os.environ.get("TASK_ID", "test-s3-operator")

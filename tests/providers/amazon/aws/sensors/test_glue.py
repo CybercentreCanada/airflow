@@ -1,5 +1,3 @@
-
-
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -18,44 +16,46 @@
 # under the License.
 
 import unittest
-
-import mock
+from unittest import mock
 
 from airflow import configuration
-from airflow.providers.amazon.aws.hooks.glue import AwsGlueJobHook
-from airflow.providers.amazon.aws.sensors.glue import AwsGlueJobSensor
+from airflow.providers.amazon.aws.hooks.glue import GlueJobHook
+from airflow.providers.amazon.aws.sensors.glue import GlueJobSensor
 
 
-class TestAwsGlueJobSensor(unittest.TestCase):
-
+class TestGlueJobSensor(unittest.TestCase):
     def setUp(self):
         configuration.load_test_config()
 
-    @mock.patch.object(AwsGlueJobHook, 'get_conn')
-    @mock.patch.object(AwsGlueJobHook, 'job_completion')
-    def test_poke(self, mock_job_completion, mock_conn):
+    @mock.patch.object(GlueJobHook, 'get_conn')
+    @mock.patch.object(GlueJobHook, 'get_job_state')
+    def test_poke(self, mock_get_job_state, mock_conn):
         mock_conn.return_value.get_job_run()
-        mock_job_completion.return_value = 'SUCCEEDED'
-        op = AwsGlueJobSensor(task_id='test_glue_job_sensor',
-                              job_name='aws_test_glue_job',
-                              run_id='5152fgsfsjhsh61661',
-                              poke_interval=1,
-                              timeout=5,
-                              aws_conn_id='aws_default')
-        self.assertTrue(op.poke(None))
+        mock_get_job_state.return_value = 'SUCCEEDED'
+        op = GlueJobSensor(
+            task_id='test_glue_job_sensor',
+            job_name='aws_test_glue_job',
+            run_id='5152fgsfsjhsh61661',
+            poke_interval=1,
+            timeout=5,
+            aws_conn_id='aws_default',
+        )
+        assert op.poke({})
 
-    @mock.patch.object(AwsGlueJobHook, 'get_conn')
-    @mock.patch.object(AwsGlueJobHook, 'job_completion')
-    def test_poke_false(self, mock_job_completion, mock_conn):
+    @mock.patch.object(GlueJobHook, 'get_conn')
+    @mock.patch.object(GlueJobHook, 'get_job_state')
+    def test_poke_false(self, mock_get_job_state, mock_conn):
         mock_conn.return_value.get_job_run()
-        mock_job_completion.return_value = 'RUNNING'
-        op = AwsGlueJobSensor(task_id='test_glue_job_sensor',
-                              job_name='aws_test_glue_job',
-                              run_id='5152fgsfsjhsh61661',
-                              poke_interval=1,
-                              timeout=5,
-                              aws_conn_id='aws_default')
-        self.assertFalse(op.poke(None))
+        mock_get_job_state.return_value = 'RUNNING'
+        op = GlueJobSensor(
+            task_id='test_glue_job_sensor',
+            job_name='aws_test_glue_job',
+            run_id='5152fgsfsjhsh61661',
+            poke_interval=1,
+            timeout=5,
+            aws_conn_id='aws_default',
+        )
+        assert not op.poke({})
 
 
 if __name__ == '__main__':

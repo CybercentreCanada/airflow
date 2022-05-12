@@ -15,9 +15,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""
-This module contains Google Search Ads 360 hook.
-"""
+"""This module contains Google Search Ads 360 hook."""
 from typing import Any, Dict, Optional, Sequence, Union
 
 from googleapiclient.discovery import build
@@ -26,9 +24,7 @@ from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
 
 
 class GoogleSearchAdsHook(GoogleBaseHook):
-    """
-    Hook for Google Search Ads 360.
-    """
+    """Hook for Google Search Ads 360."""
 
     _conn = None  # type: Optional[Any]
 
@@ -47,9 +43,7 @@ class GoogleSearchAdsHook(GoogleBaseHook):
         self.api_version = api_version
 
     def get_conn(self):
-        """
-        Retrieves connection to Google SearchAds.
-        """
+        """Retrieves connection to Google SearchAds."""
         if not self._conn:
             http_authorized = self._authorize()
             self._conn = build(
@@ -65,14 +59,8 @@ class GoogleSearchAdsHook(GoogleBaseHook):
         Inserts a report request into the reporting system.
 
         :param report: Report to be generated.
-        :type report: Dict[str, Any]
         """
-        response = (
-            self.get_conn()  # pylint: disable=no-member
-            .reports()
-            .request(body=report)
-            .execute(num_retries=self.num_retries)
-        )
+        response = self.get_conn().reports().request(body=report).execute(num_retries=self.num_retries)
         return response
 
     def get(self, report_id: str) -> Any:
@@ -80,14 +68,8 @@ class GoogleSearchAdsHook(GoogleBaseHook):
         Polls for the status of a report request.
 
         :param report_id: ID of the report request being polled.
-        :type report_id: str
         """
-        response = (
-            self.get_conn()  # pylint: disable=no-member
-            .reports()
-            .get(reportId=report_id)
-            .execute(num_retries=self.num_retries)
-        )
+        response = self.get_conn().reports().get(reportId=report_id).execute(num_retries=self.num_retries)
         return response
 
     def get_file(self, report_fragment: int, report_id: str) -> Any:
@@ -95,12 +77,10 @@ class GoogleSearchAdsHook(GoogleBaseHook):
         Downloads a report file encoded in UTF-8.
 
         :param report_fragment: The index of the report fragment to download.
-        :type report_fragment: int
         :param report_id: ID of the report.
-        :type report_id: str
         """
         response = (
-            self.get_conn()  # pylint: disable=no-member
+            self.get_conn()
             .reports()
             .getFile(reportFragment=report_fragment, reportId=report_id)
             .execute(num_retries=self.num_retries)

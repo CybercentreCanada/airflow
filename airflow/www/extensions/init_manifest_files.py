@@ -32,15 +32,14 @@ def configure_manifest_files(app):
     manifest = {}
 
     def parse_manifest_json():
-        # noinspection PyBroadException
         try:
             manifest_file = os.path.join(os.path.dirname(__file__), os.pardir, 'static/dist/manifest.json')
-            with open(manifest_file, 'r') as file:
+            with open(manifest_file) as file:
                 manifest.update(json.load(file))
 
                 for source, target in manifest.copy().items():
                     manifest[source] = os.path.join("dist", target)
-        except Exception:  # pylint: disable=broad-except
+        except Exception:
             print("Please make sure to build the frontend in static/ directory and restart the server")
 
     def get_asset_url(filename):
@@ -51,7 +50,7 @@ def configure_manifest_files(app):
     parse_manifest_json()
 
     @app.context_processor
-    def get_url_for_asset():  # pylint: disable=unused-variable
+    def get_url_for_asset():
         """
         Template tag to return the asset URL.
         WebPack renders the assets after minification and modification

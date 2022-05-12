@@ -17,14 +17,14 @@
 # under the License.
 
 import os
+from datetime import datetime
 
 from airflow import models
 from airflow.providers.google.cloud.operators.text_to_speech import CloudTextToSpeechSynthesizeOperator
 from airflow.providers.google.cloud.operators.translate_speech import CloudTranslateSpeechOperator
-from airflow.utils import dates
 
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "example-project")
-BUCKET_NAME = os.environ.get("GCP_TRANSLATE_SPEECH_TEST_BUCKET", "gcp-translate-speech-test-bucket")
+BUCKET_NAME = os.environ.get("GCP_TRANSLATE_SPEECH_TEST_BUCKET", "INVALID BUCKET NAME")
 
 # [START howto_operator_translate_speech_gcp_filename]
 FILENAME = "gcp-speech-test-file"
@@ -38,7 +38,7 @@ AUDIO_CONFIG = {"audio_encoding": "LINEAR16"}
 
 # [START howto_operator_translate_speech_arguments]
 CONFIG = {"encoding": "LINEAR16", "language_code": "en_US"}
-AUDIO = {"uri": "gs://{bucket}/{object}".format(bucket=BUCKET_NAME, object=FILENAME)}
+AUDIO = {"uri": f"gs://{BUCKET_NAME}/{FILENAME}"}
 TARGET_LANGUAGE = 'pl'
 FORMAT = 'text'
 MODEL = 'base'
@@ -48,8 +48,9 @@ SOURCE_LANGUAGE = None  # type: None
 
 with models.DAG(
     "example_gcp_translate_speech",
-    schedule_interval=None,  # Override to match your needs
-    start_date=dates.days_ago(1),
+    schedule_interval='@once',  # Override to match your needs
+    start_date=datetime(2021, 1, 1),
+    catchup=False,
     tags=['example'],
 ) as dag:
     text_to_speech_synthesize_task = CloudTextToSpeechSynthesizeOperator(
@@ -70,7 +71,7 @@ with models.DAG(
         format_=FORMAT,
         source_language=SOURCE_LANGUAGE,
         model=MODEL,
-        task_id='translate_speech_task'
+        task_id='translate_speech_task',
     )
     translate_speech_task2 = CloudTranslateSpeechOperator(
         audio=AUDIO,
@@ -79,7 +80,7 @@ with models.DAG(
         format_=FORMAT,
         source_language=SOURCE_LANGUAGE,
         model=MODEL,
-        task_id='translate_speech_task2'
+        task_id='translate_speech_task2',
     )
     # [END howto_operator_translate_speech]
     text_to_speech_synthesize_task >> translate_speech_task >> translate_speech_task2

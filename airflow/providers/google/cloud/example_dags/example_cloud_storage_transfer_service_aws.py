@@ -28,7 +28,7 @@ This DAG relies on the following OS environment variables
   .. warning::
     You need to provide a large enough set of data so that operations do not execute too quickly.
     Otherwise, DAG will fail.
-* GCP_TRANSFER_SECOND_TARGET_BUCKET - Google Cloud Storage bucket bucket to which files are copied
+* GCP_TRANSFER_SECOND_TARGET_BUCKET - Google Cloud Storage bucket to which files are copied
 * WAIT_FOR_OPERATION_POKE_INTERVAL - interval of what to check the status of the operation
   A smaller value than the default value accelerates the system test and ensures its correct execution with
   smaller quantities of files in the source bucket
@@ -40,22 +40,39 @@ import os
 from datetime import datetime, timedelta
 
 from airflow import models
+from airflow.models.baseoperator import chain
 from airflow.providers.google.cloud.hooks.cloud_storage_transfer_service import (
-    ALREADY_EXISTING_IN_SINK, AWS_S3_DATA_SOURCE, BUCKET_NAME, DESCRIPTION, FILTER_JOB_NAMES,
-    FILTER_PROJECT_ID, GCS_DATA_SINK, JOB_NAME, PROJECT_ID, SCHEDULE, SCHEDULE_END_DATE, SCHEDULE_START_DATE,
-    START_TIME_OF_DAY, STATUS, TRANSFER_OPTIONS, TRANSFER_SPEC, GcpTransferJobsStatus,
+    ALREADY_EXISTING_IN_SINK,
+    AWS_S3_DATA_SOURCE,
+    BUCKET_NAME,
+    DESCRIPTION,
+    FILTER_JOB_NAMES,
+    FILTER_PROJECT_ID,
+    GCS_DATA_SINK,
+    JOB_NAME,
+    PROJECT_ID,
+    SCHEDULE,
+    SCHEDULE_END_DATE,
+    SCHEDULE_START_DATE,
+    START_TIME_OF_DAY,
+    STATUS,
+    TRANSFER_OPTIONS,
+    TRANSFER_SPEC,
+    GcpTransferJobsStatus,
     GcpTransferOperationStatus,
 )
 from airflow.providers.google.cloud.operators.cloud_storage_transfer_service import (
-    CloudDataTransferServiceCancelOperationOperator, CloudDataTransferServiceCreateJobOperator,
-    CloudDataTransferServiceDeleteJobOperator, CloudDataTransferServiceGetOperationOperator,
-    CloudDataTransferServiceListOperationsOperator, CloudDataTransferServicePauseOperationOperator,
+    CloudDataTransferServiceCancelOperationOperator,
+    CloudDataTransferServiceCreateJobOperator,
+    CloudDataTransferServiceDeleteJobOperator,
+    CloudDataTransferServiceGetOperationOperator,
+    CloudDataTransferServiceListOperationsOperator,
+    CloudDataTransferServicePauseOperationOperator,
     CloudDataTransferServiceResumeOperationOperator,
 )
 from airflow.providers.google.cloud.sensors.cloud_storage_transfer_service import (
     CloudDataTransferServiceJobStatusSensor,
 )
-from airflow.utils.dates import days_ago
 
 GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'example-project')
 GCP_DESCRIPTION = os.environ.get('GCP_DESCRIPTION', 'description')
@@ -67,9 +84,7 @@ GCP_TRANSFER_FIRST_TARGET_BUCKET = os.environ.get(
     'GCP_TRANSFER_FIRST_TARGET_BUCKET', 'gcp-transfer-first-target'
 )
 
-GCP_TRANSFER_JOB_NAME = os.environ.get(
-    'GCP_TRANSFER_JOB_NAME', 'transferJobs/sampleJob'
-)
+GCP_TRANSFER_JOB_NAME = os.environ.get('GCP_TRANSFER_JOB_NAME', 'transferJobs/sampleJob')
 
 # [START howto_operator_gcp_transfer_create_job_body_aws]
 aws_to_gcs_transfer_body = {
@@ -91,14 +106,11 @@ aws_to_gcs_transfer_body = {
 # [END howto_operator_gcp_transfer_create_job_body_aws]
 
 
-# [START howto_operator_gcp_transfer_default_args]
-default_args = {'owner': 'airflow'}
-# [END howto_operator_gcp_transfer_default_args]
-
 with models.DAG(
     'example_gcp_transfer_aws',
     schedule_interval=None,  # Override to match your needs
-    start_date=days_ago(1),
+    start_date=datetime(2021, 1, 1),
+    catchup=False,
     tags=['example'],
 ) as dag:
 
@@ -172,6 +184,14 @@ with models.DAG(
     )
     # [END howto_operator_gcp_transfer_delete_job]
 
-    create_transfer_job_from_aws >> wait_for_operation_to_start >> pause_operation >> \
-        list_operations >> get_operation >> resume_operation >> wait_for_operation_to_end >> \
-        cancel_operation >> delete_transfer_from_aws_job
+    chain(
+        create_transfer_job_from_aws,
+        wait_for_operation_to_start,
+        pause_operation,
+        list_operations,
+        get_operation,
+        resume_operation,
+        wait_for_operation_to_end,
+        cancel_operation,
+        delete_transfer_from_aws_job,
+    )

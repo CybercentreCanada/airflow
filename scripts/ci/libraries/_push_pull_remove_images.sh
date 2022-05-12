@@ -16,167 +16,72 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# Pulls image in case it is needed (either has never been pulled or pulling was forced
+
+# Tries to push the image several times in case we receive an intermittent error on push
+# $1 - tag to push
+function push_pull_remove_images::push_image_with_retries() {
+    for try_num in 1 2 3 4
+    do
+        set +e
+        echo
+        echo "Trying to push the image ${1}. Number of try: ${try_num}"
+        docker_v push "${1}"
+        local res=$?
+        set -e
+        if [[ ${res} != "0" ]]; then
+            echo
+            echo  "${COLOR_YELLOW}WARNING: Error ${res} when pushing image on ${try_num} try  ${COLOR_RESET}"
+            echo
+            continue
+        else
+            return 0
+        fi
+    done
+    echo
+    echo  "${COLOR_RED}ERROR: Error ${res} when pushing image on ${try_num} try. Giving up!  ${COLOR_RESET}"
+    echo
+    return 1
+}
+
+
+# Pulls image in case it is missing
 # Should be run with set +e
 # Parameters:
 #   $1 -> image to pull
-function pull_image_if_needed() {
-    local IMAGE_TO_PULL="${1}"
-    local IMAGE_HASH
-    IMAGE_HASH=$(docker images -q "${IMAGE_TO_PULL}" 2> /dev/null || true)
-    local PULL_IMAGE=${FORCE_PULL_IMAGES}
-
-    if [[ "${IMAGE_HASH}" == "" ]]; then
-        PULL_IMAGE="true"
-    fi
-    if [[ "${PULL_IMAGE}" == "true" ]]; then
+function push_pull_remove_images::pull_image_if_missing() {
+    local image_to_pull="${1}"
+    local image_hash
+    image_hash=$(docker images -q "${image_to_pull}" 2> /dev/null || true)
+    if [[ -z "${image_hash=}" ]]; then
         echo
-        echo "Pulling the image ${IMAGE_TO_PULL}"
+        echo "Pulling the image ${image_to_pull}"
         echo
-        verbose_docker pull "${IMAGE_TO_PULL}" | tee -a "${OUTPUT_LOG}"
-        EXIT_VALUE="$?"
-        echo
-        return ${EXIT_VALUE}
+        docker pull "${image_to_pull}"
     fi
 }
 
-# Pulls image if needed but tries to pull it from cache (for example GitHub registry) before
-# It attempts to pull it from the main repository. This is used to speed up the builds
-# In GitHub Actions.
-# Parameters:
-#   $1 -> image to pull
-#   $2 -> cache image to pull first
-function pull_image_possibly_from_cache() {
-    local IMAGE="${1}"
-    local CACHED_IMAGE="${2}"
-    local IMAGE_PULL_RETURN_VALUE=-1
 
+# waits for an image to be available in the GitHub registry
+function push_pull_remove_images::wait_for_image() {
+    # Maximum number of tries 100 = we try for max. 100 minutes.
+    local MAX_TRIES=100
     set +e
-    if [[ ${CACHED_IMAGE:=} != "" ]]; then
-        pull_image_if_needed "${CACHED_IMAGE}"
-        IMAGE_PULL_RETURN_VALUE="$?"
-        if [[ ${IMAGE_PULL_RETURN_VALUE} == "0" ]]; then
-            # Tag the image to be the target one
-            verbose_docker tag "${CACHED_IMAGE}" "${IMAGE}"
+    echo " Waiting for github registry image: $1"
+    local count=0
+    while true
+    do
+        if push_pull_remove_images::pull_image_if_missing "$1"; then
+            break
         fi
-    fi
-    if [[ ${IMAGE_PULL_RETURN_VALUE} != "0" ]]; then
-        pull_image_if_needed "${IMAGE}"
-    fi
+        if [[ ${count} == "${MAX_TRIES}" ]]; then
+            echo "${COLOR_RED}Giving up after ${MAX_TRIES}!${COLOR_RESET}"
+            echo "If there were delays with building the image, maintainers could potentially restart the build when the images are ready!"
+            echo "Or you can run 'git commit --amend' and then push the PR again with 'git push --force-with-lease' to re-trigger the build."
+            return 1
+        fi
+        echo "${COLOR_YELLOW}Failed to pull the image for ${count} time. Sleeping!${COLOR_RESET}"
+        sleep 60
+        count=$((count + 1))
+    done
     set -e
-}
-
-# Pulls CI image in case caching strategy is "pulled" and the image needs to be pulled
-function pull_ci_image_if_needed() {
-    # Whether to force pull images to populate cache
-    export FORCE_PULL_IMAGES=${FORCE_PULL_IMAGES:="false"}
-
-    if [[ "${DOCKER_CACHE}" == "pulled" ]]; then
-        if [[ "${FORCE_PULL_IMAGES}" == "true" ]]; then
-            echo
-            echo "Force pull base image ${PYTHON_BASE_IMAGE}"
-            echo
-            if [[ -n ${DETECTED_TERMINAL:=""} ]]; then
-                echo -n "
-Docker pulling ${PYTHON_BASE_IMAGE}.
-                    " > "${DETECTED_TERMINAL}"
-            fi
-            if [[ ${PULL_PYTHON_BASE_IMAGES_FROM_CACHE:="true"} == "true" ]]; then
-                pull_image_possibly_from_cache "${PYTHON_BASE_IMAGE}" "${CACHED_PYTHON_BASE_IMAGE}"
-            else
-                verbose_docker pull "${PYTHON_BASE_IMAGE}" | tee -a "${OUTPUT_LOG}"
-            fi
-            echo
-        fi
-        pull_image_possibly_from_cache "${AIRFLOW_CI_IMAGE}" "${CACHED_AIRFLOW_CI_IMAGE}"
-    fi
-}
-
-
-# Pulls PROD image in case caching strategy is "pulled" and the image needs to be pulled
-function pull_prod_images_if_needed() {
-    # Whether to force pull images to populate cache
-    export FORCE_PULL_IMAGES=${FORCE_PULL_IMAGES:="false"}
-
-    if [[ "${DOCKER_CACHE}" == "pulled" ]]; then
-        if [[ "${FORCE_PULL_IMAGES}" == "true" ]]; then
-            echo
-            echo "Force pull base image ${PYTHON_BASE_IMAGE}"
-            echo
-            if [[ ${PULL_PYTHON_BASE_IMAGES_FROM_CACHE:="true"} == "true" ]]; then
-                pull_image_possibly_from_cache "${PYTHON_BASE_IMAGE}" "${CACHED_PYTHON_BASE_IMAGE}"
-            else
-                verbose_docker pull "${PYTHON_BASE_IMAGE}" | tee -a "${OUTPUT_LOG}"
-            fi
-            echo
-        fi
-        # "Build" segment of production image
-        pull_image_possibly_from_cache "${AIRFLOW_PROD_BUILD_IMAGE}" "${CACHED_AIRFLOW_PROD_BUILD_IMAGE}"
-        # we never pull the main segment of production image - we always build it locally = this is
-        # usually very fast this way and it is much nicer for rebuilds and development
-    fi
-}
-
-# Pushes Ci image and it's manifest to the registry. In case the image was taken from cache registry
-# it is pushed to the cache, not to the main registry. Manifest is only pushed to the main registry
-function push_ci_image() {
-    if [[ ${CACHED_AIRFLOW_CI_IMAGE:=} != "" ]]; then
-        verbose_docker tag "${AIRFLOW_CI_IMAGE}" "${CACHED_AIRFLOW_CI_IMAGE}"
-        IMAGE_TO_PUSH="${CACHED_AIRFLOW_CI_IMAGE}"
-    else
-        IMAGE_TO_PUSH="${AIRFLOW_CI_IMAGE}"
-    fi
-    verbose_docker push "${IMAGE_TO_PUSH}"
-    if [[ ${CACHED_AIRFLOW_CI_IMAGE} == "" ]]; then
-        # Only push manifest image for builds that are not using CI cache
-        verbose_docker tag "${AIRFLOW_CI_LOCAL_MANIFEST_IMAGE}" "${AIRFLOW_CI_REMOTE_MANIFEST_IMAGE}"
-        verbose_docker push "${AIRFLOW_CI_REMOTE_MANIFEST_IMAGE}"
-        if [[ -n ${DEFAULT_IMAGE:=""} ]]; then
-            verbose_docker push "${DEFAULT_IMAGE}"
-        fi
-    fi
-    if [[ ${CACHED_PYTHON_BASE_IMAGE} != "" ]]; then
-        verbose_docker tag "${PYTHON_BASE_IMAGE}" "${CACHED_PYTHON_BASE_IMAGE}"
-        verbose_docker push "${CACHED_PYTHON_BASE_IMAGE}"
-    fi
-
-}
-
-# Pushes PROD image to the registry. In case the image was taken from cache registry
-# it is also pushed to the cache, not to the main registry
-function push_prod_images() {
-    if [[ ${CACHED_AIRFLOW_PROD_IMAGE:=} != "" ]]; then
-        verbose_docker tag "${AIRFLOW_PROD_IMAGE}" "${CACHED_AIRFLOW_PROD_IMAGE}"
-        IMAGE_TO_PUSH="${CACHED_AIRFLOW_PROD_IMAGE}"
-    else
-        IMAGE_TO_PUSH="${AIRFLOW_PROD_IMAGE}"
-    fi
-    if [[ ${CACHED_AIRFLOW_PROD_BUILD_IMAGE:=} != "" ]]; then
-        verbose_docker tag "${AIRFLOW_PROD_BUILD_IMAGE}" "${CACHED_AIRFLOW_PROD_BUILD_IMAGE}"
-        IMAGE_TO_PUSH_BUILD="${CACHED_AIRFLOW_PROD_BUILD_IMAGE}"
-    else
-        IMAGE_TO_PUSH_BUILD="${AIRFLOW_PROD_BUILD_IMAGE}"
-    fi
-    verbose_docker push "${IMAGE_TO_PUSH}"
-    verbose_docker push "${IMAGE_TO_PUSH_BUILD}"
-    if [[ -n ${DEFAULT_IMAGE:=""} && ${CACHED_AIRFLOW_PROD_IMAGE} == "" ]]; then
-        verbose_docker push "${DEFAULT_IMAGE}"
-    fi
-    # we do not need to push PYTHON base image here - they are already pushed in the CI push
-}
-
-# Removes airflow CI and base images
-function remove_all_images() {
-    echo
-    "${AIRFLOW_SOURCES}/confirm" "Removing all local images ."
-    echo
-    verbose_docker rmi "${PYTHON_BASE_IMAGE}" || true
-    verbose_docker rmi "${AIRFLOW_CI_IMAGE}" || true
-    echo
-    echo "###################################################################"
-    echo "NOTE!! Removed Airflow images for Python version ${PYTHON_MAJOR_MINOR_VERSION}."
-    echo "       But the disk space in docker will be reclaimed only after"
-    echo "       running 'docker system prune' command."
-    echo "###################################################################"
-    echo
 }

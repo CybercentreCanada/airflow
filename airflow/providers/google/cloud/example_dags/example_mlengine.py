@@ -20,47 +20,87 @@
 Example Airflow DAG for Google ML Engine service.
 """
 import os
-from typing import Dict
+from datetime import datetime
+from typing import Any, Dict
 
 from airflow import models
 from airflow.operators.bash import BashOperator
 from airflow.providers.google.cloud.operators.mlengine import (
-    MLEngineCreateModelOperator, MLEngineCreateVersionOperator, MLEngineDeleteModelOperator,
-    MLEngineDeleteVersionOperator, MLEngineGetModelOperator, MLEngineListVersionsOperator,
-    MLEngineSetDefaultVersionOperator, MLEngineStartBatchPredictionJobOperator,
+    MLEngineCreateModelOperator,
+    MLEngineCreateVersionOperator,
+    MLEngineDeleteModelOperator,
+    MLEngineDeleteVersionOperator,
+    MLEngineGetModelOperator,
+    MLEngineListVersionsOperator,
+    MLEngineSetDefaultVersionOperator,
+    MLEngineStartBatchPredictionJobOperator,
     MLEngineStartTrainingJobOperator,
 )
 from airflow.providers.google.cloud.utils import mlengine_operator_utils
-from airflow.utils.dates import days_ago
 
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "example-project")
 
 MODEL_NAME = os.environ.get("GCP_MLENGINE_MODEL_NAME", "model_name")
 
-SAVED_MODEL_PATH = os.environ.get("GCP_MLENGINE_SAVED_MODEL_PATH", "gs://test-airflow-mlengine/saved-model/")
-JOB_DIR = os.environ.get("GCP_MLENGINE_JOB_DIR", "gs://test-airflow-mlengine/keras-job-dir")
-PREDICTION_INPUT = os.environ.get("GCP_MLENGINE_PREDICTION_INPUT",
-                                  "gs://test-airflow-mlengine/prediction_input.json")
-PREDICTION_OUTPUT = os.environ.get("GCP_MLENGINE_PREDICTION_OUTPUT",
-                                   "gs://test-airflow-mlengine/prediction_output")
-TRAINER_URI = os.environ.get("GCP_MLENGINE_TRAINER_URI", "gs://test-airflow-mlengine/trainer.tar.gz")
+SAVED_MODEL_PATH = os.environ.get("GCP_MLENGINE_SAVED_MODEL_PATH", "gs://INVALID BUCKET NAME/saved-model/")
+JOB_DIR = os.environ.get("GCP_MLENGINE_JOB_DIR", "gs://INVALID BUCKET NAME/keras-job-dir")
+PREDICTION_INPUT = os.environ.get(
+    "GCP_MLENGINE_PREDICTION_INPUT", "gs://INVALID BUCKET NAME/prediction_input.json"
+)
+PREDICTION_OUTPUT = os.environ.get(
+    "GCP_MLENGINE_PREDICTION_OUTPUT", "gs://INVALID BUCKET NAME/prediction_output"
+)
+TRAINER_URI = os.environ.get("GCP_MLENGINE_TRAINER_URI", "gs://INVALID BUCKET NAME/trainer.tar.gz")
 TRAINER_PY_MODULE = os.environ.get("GCP_MLENGINE_TRAINER_TRAINER_PY_MODULE", "trainer.task")
 
-SUMMARY_TMP = os.environ.get("GCP_MLENGINE_DATAFLOW_TMP", "gs://test-airflow-mlengine/tmp/")
-SUMMARY_STAGING = os.environ.get("GCP_MLENGINE_DATAFLOW_STAGING", "gs://test-airflow-mlengine/staging/")
+SUMMARY_TMP = os.environ.get("GCP_MLENGINE_DATAFLOW_TMP", "gs://INVALID BUCKET NAME/tmp/")
+SUMMARY_STAGING = os.environ.get("GCP_MLENGINE_DATAFLOW_STAGING", "gs://INVALID BUCKET NAME/staging/")
 
-default_args = {
-    "params": {
-        "model_name": MODEL_NAME
-    }
-}
 
 with models.DAG(
     "example_gcp_mlengine",
-    schedule_interval=None,  # Override to match your needs
-    start_date=days_ago(1),
+    schedule_interval='@once',  # Override to match your needs
+    start_date=datetime(2021, 1, 1),
+    catchup=False,
     tags=['example'],
+    params={"model_name": MODEL_NAME},
 ) as dag:
+    hyperparams: Dict[str, Any] = {
+        'goal': 'MAXIMIZE',
+        'hyperparameterMetricTag': 'metric1',
+        'maxTrials': 30,
+        'maxParallelTrials': 1,
+        'enableTrialEarlyStopping': True,
+        'params': [],
+    }
+
+    hyperparams['params'].append(
+        {
+            'parameterName': 'hidden1',
+            'type': 'INTEGER',
+            'minValue': 40,
+            'maxValue': 400,
+            'scaleType': 'UNIT_LINEAR_SCALE',
+        }
+    )
+
+    hyperparams['params'].append(
+        {'parameterName': 'numRnnCells', 'type': 'DISCRETE', 'discreteValues': [1, 2, 3, 4]}
+    )
+
+    hyperparams['params'].append(
+        {
+            'parameterName': 'rnnCellType',
+            'type': 'CATEGORICAL',
+            'categoricalValues': [
+                'BasicLSTMCell',
+                'BasicRNNCell',
+                'GRUCell',
+                'LSTMCell',
+                'LayerNormBasicLSTMCell',
+            ],
+        }
+    )
     # [START howto_operator_gcp_mlengine_training]
     training = MLEngineStartTrainingJobOperator(
         task_id="training",
@@ -73,6 +113,8 @@ with models.DAG(
         package_uris=[TRAINER_URI],
         training_python_module=TRAINER_PY_MODULE,
         training_args=[],
+        labels={"job_type": "training"},
+        hyperparameters=hyperparams,
     )
     # [END howto_operator_gcp_mlengine_training]
 
@@ -96,7 +138,7 @@ with models.DAG(
 
     # [START howto_operator_gcp_mlengine_print_model]
     get_model_result = BashOperator(
-        bash_command="echo \"{{ task_instance.xcom_pull('get-model') }}\"",
+        bash_command=f"echo {get_model.output}",
         task_id="get-model-result",
     )
     # [END howto_operator_gcp_mlengine_print_model]
@@ -109,12 +151,12 @@ with models.DAG(
         version={
             "name": "v1",
             "description": "First-version",
-            "deployment_uri": '{}/keras_export/'.format(JOB_DIR),
+            "deployment_uri": f'{JOB_DIR}/keras_export/',
             "runtime_version": "1.15",
             "machineType": "mls1-c1-m2",
             "framework": "TENSORFLOW",
-            "pythonVersion": "3.7"
-        }
+            "pythonVersion": "3.7",
+        },
     )
     # [END howto_operator_gcp_mlengine_create_version1]
 
@@ -130,8 +172,8 @@ with models.DAG(
             "runtime_version": "1.15",
             "machineType": "mls1-c1-m2",
             "framework": "TENSORFLOW",
-            "pythonVersion": "3.7"
-        }
+            "pythonVersion": "3.7",
+        },
     )
     # [END howto_operator_gcp_mlengine_create_version2]
 
@@ -154,7 +196,7 @@ with models.DAG(
 
     # [START howto_operator_gcp_mlengine_print_versions]
     list_version_result = BashOperator(
-        bash_command="echo \"{{ task_instance.xcom_pull('list-version') }}\"",
+        bash_command=f"echo {list_version.output}",
         task_id="list-version-result",
     )
     # [END howto_operator_gcp_mlengine_print_versions]
@@ -169,30 +211,26 @@ with models.DAG(
         data_format="TEXT",
         input_paths=[PREDICTION_INPUT],
         output_path=PREDICTION_OUTPUT,
+        labels={"job_type": "prediction"},
     )
     # [END howto_operator_gcp_mlengine_get_prediction]
 
     # [START howto_operator_gcp_mlengine_delete_version]
     delete_version = MLEngineDeleteVersionOperator(
-        task_id="delete-version",
-        project_id=PROJECT_ID,
-        model_name=MODEL_NAME,
-        version_name="v1"
+        task_id="delete-version", project_id=PROJECT_ID, model_name=MODEL_NAME, version_name="v1"
     )
     # [END howto_operator_gcp_mlengine_delete_version]
 
     # [START howto_operator_gcp_mlengine_delete_model]
     delete_model = MLEngineDeleteModelOperator(
-        task_id="delete-model",
-        project_id=PROJECT_ID,
-        model_name=MODEL_NAME,
-        delete_contents=True
+        task_id="delete-model", project_id=PROJECT_ID, model_name=MODEL_NAME, delete_contents=True
     )
     # [END howto_operator_gcp_mlengine_delete_model]
 
     training >> create_version
     training >> create_version_2
     create_model >> get_model >> [get_model_result, delete_model]
+    create_model >> get_model >> delete_model
     create_model >> create_version >> create_version_2 >> set_defaults_version >> list_version
     create_version >> prediction
     create_version_2 >> prediction
@@ -206,10 +244,13 @@ with models.DAG(
         """
         Gets metric function and keys used to generate summary
         """
+
         def normalize_value(inst: Dict):
             val = float(inst['dense_4'][0])
             return tuple([val])  # returns a tuple.
+
         return normalize_value, ['val']  # key order must match.
+
     # [END howto_operator_gcp_mlengine_get_metric]
 
     # [START howto_operator_gcp_mlengine_validate_error]
@@ -218,12 +259,13 @@ with models.DAG(
         Validate summary result
         """
         if summary['val'] > 1:
-            raise ValueError('Too high val>1; summary={}'.format(summary))
+            raise ValueError(f'Too high val>1; summary={summary}')
         if summary['val'] < 0:
-            raise ValueError('Too low val<0; summary={}'.format(summary))
+            raise ValueError(f'Too low val<0; summary={summary}')
         if summary['count'] != 20:
-            raise ValueError('Invalid value val != 20; summary={}'.format(summary))
+            raise ValueError(f'Invalid value val != 20; summary={summary}')
         return summary
+
     # [END howto_operator_gcp_mlengine_validate_error]
 
     # [START howto_operator_gcp_mlengine_evaluate]

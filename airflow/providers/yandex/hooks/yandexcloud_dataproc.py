@@ -23,11 +23,10 @@ class DataprocHook(YandexCloudBaseHook):
     """
     A base hook for Yandex.Cloud Data Proc.
 
-    :param connection_id: The connection ID to use when fetching connection info.
-    :type connection_id: str
+    :param yandex_conn_id: The connection ID to use when fetching connection info.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.cluster_id = None
         self.client = self.sdk.wrappers.Dataproc(

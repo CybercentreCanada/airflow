@@ -27,7 +27,7 @@ NOTE:   this hook also relies on the Segment analytics package:
 import analytics
 
 from airflow.exceptions import AirflowException
-from airflow.hooks.base_hook import BaseHook
+from airflow.hooks.base import BaseHook
 
 
 class SegmentHook(BaseHook):
@@ -41,10 +41,8 @@ class SegmentHook(BaseHook):
     :param segment_conn_id: the name of the connection that has the parameters
         we need to connect to Segment. The connection should be type `json` and include a
         write_key security token in the `Extras` field.
-    :type segment_conn_id: str
     :param segment_debug_mode: Determines whether Segment should run in debug mode.
         Defaults to False
-    :type segment_debug_mode: bool
 
     .. note::
         You must include a JSON structure in the `Extras` field.
@@ -52,13 +50,15 @@ class SegmentHook(BaseHook):
         So we define it in the `Extras` field as:
         `{"write_key":"YOUR_SECURITY_TOKEN"}`
     """
+
+    conn_name_attr = 'segment_conn_id'
+    default_conn_name = 'segment_default'
+    conn_type = 'segment'
+    hook_name = 'Segment'
+
     def __init__(
-            self,
-            segment_conn_id='segment_default',
-            segment_debug_mode=False,
-            *args,
-            **kwargs
-    ):
+        self, segment_conn_id: str = 'segment_default', segment_debug_mode: bool = False, *args, **kwargs
+    ) -> None:
         super().__init__()
         self.segment_conn_id = segment_conn_id
         self.segment_debug_mode = segment_debug_mode
@@ -72,7 +72,7 @@ class SegmentHook(BaseHook):
         if self.write_key is None:
             raise AirflowException('No Segment write key provided')
 
-    def get_conn(self):
+    def get_conn(self) -> analytics:
         self.log.info('Setting write key for Segment analytics connection')
         analytics.debug = self.segment_debug_mode
         if self.segment_debug_mode:
@@ -81,10 +81,7 @@ class SegmentHook(BaseHook):
         analytics.write_key = self.write_key
         return analytics
 
-    def on_error(self, error, items):
-        """
-        Handles error callbacks when using Segment with segment_debug_mode set to True
-        """
-        self.log.error('Encountered Segment error: %s with '
-                       'items: %s', error, items)
-        raise AirflowException('Segment error: {}'.format(error))
+    def on_error(self, error: str, items: str) -> None:
+        """Handles error callbacks when using Segment with segment_debug_mode set to True"""
+        self.log.error('Encountered Segment error: %s with items: %s', error, items)
+        raise AirflowException(f'Segment error: {error}')

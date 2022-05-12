@@ -15,30 +15,80 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from distutils.util import strtobool
-from typing import Any, Dict, Iterable, List, Mapping, Optional, SupportsAbs, Union
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, SupportsAbs, Union
 
+from airflow.compat.functools import cached_property
 from airflow.exceptions import AirflowException
-from airflow.hooks.base_hook import BaseHook
+from airflow.hooks.base import BaseHook
+from airflow.hooks.dbapi import DbApiHook
 from airflow.models import BaseOperator, SkipMixin
-from airflow.utils.decorators import apply_defaults
-
-ALLOWED_CONN_TYPE = {
-    "google_cloud_platform",
-    "jdbc",
-    "mssql",
-    "mysql",
-    "odbc",
-    "oracle",
-    "postgres",
-    "presto",
-    "snowflake",
-    "sqlite",
-    "vertica",
-}
+from airflow.utils.context import Context
 
 
-class SQLCheckOperator(BaseOperator):
+def parse_boolean(val: str) -> Union[str, bool]:
+    """Try to parse a string into boolean.
+
+    Raises ValueError if the input is not a valid true- or false-like string value.
+    """
+    val = val.lower()
+    if val in ('y', 'yes', 't', 'true', 'on', '1'):
+        return True
+    if val in ('n', 'no', 'f', 'false', 'off', '0'):
+        return False
+    raise ValueError(f"{val!r} is not a boolean-like string value")
+
+
+class BaseSQLOperator(BaseOperator):
+    """
+    This is a base class for generic SQL Operator to get a DB Hook
+
+    The provided method is .get_db_hook(). The default behavior will try to
+    retrieve the DB hook based on connection type.
+    You can custom the behavior by overriding the .get_db_hook() method.
+    """
+
+    def __init__(
+        self,
+        *,
+        conn_id: Optional[str] = None,
+        database: Optional[str] = None,
+        hook_params: Optional[Dict] = None,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.conn_id = conn_id
+        self.database = database
+        self.hook_params = {} if hook_params is None else hook_params
+
+    @cached_property
+    def _hook(self):
+        """Get DB Hook based on connection type"""
+        self.log.debug("Get connection for %s", self.conn_id)
+        conn = BaseHook.get_connection(self.conn_id)
+
+        hook = conn.get_hook(hook_params=self.hook_params)
+        if not isinstance(hook, DbApiHook):
+            raise AirflowException(
+                f'The connection type is not supported by {self.__class__.__name__}. '
+                f'The associated hook should be a subclass of `DbApiHook`. Got {hook.__class__.__name__}'
+            )
+
+        if self.database:
+            hook.schema = self.database
+
+        return hook
+
+    def get_db_hook(self) -> DbApiHook:
+        """
+        Get the database hook for the connection.
+
+        :return: the database hook object.
+        :rtype: DbApiHook
+        """
+        return self._hook
+
+
+class SQLCheckOperator(BaseSQLOperator):
     """
     Performs checks against a db. The ``SQLCheckOperator`` expects
     a sql query that will return a single row. Each value on that
@@ -66,27 +116,26 @@ class SQLCheckOperator(BaseOperator):
     publishing dubious data, or on the side and receive email alerts
     without stopping the progress of the DAG.
 
-    Note that this is an abstract class and get_db_hook
-    needs to be defined. Whereas a get_db_hook is hook that gets a
-    single record from an external source.
-
     :param sql: the sql to be executed. (templated)
-    :type sql: str
+    :param conn_id: the connection ID used to connect to the database.
+    :param database: name of database which overwrite the defined one in connection
     """
 
-    template_fields: Iterable[str] = ("sql",)
-    template_ext: Iterable[str] = (".hql", ".sql",)
+    template_fields: Sequence[str] = ("sql",)
+    template_ext: Sequence[str] = (
+        ".hql",
+        ".sql",
+    )
+    template_fields_renderers = {"sql": "sql"}
     ui_color = "#fff7e6"
 
-    @apply_defaults
     def __init__(
-        self, *, sql: str, conn_id: Optional[str] = None, **kwargs
+        self, *, sql: str, conn_id: Optional[str] = None, database: Optional[str] = None, **kwargs
     ) -> None:
-        super().__init__(**kwargs)
-        self.conn_id = conn_id
+        super().__init__(conn_id=conn_id, database=database, **kwargs)
         self.sql = sql
 
-    def execute(self, context=None):
+    def execute(self, context: Context):
         self.log.info("Executing SQL check: %s", self.sql)
         records = self.get_db_hook().get_first(self.sql)
 
@@ -94,22 +143,9 @@ class SQLCheckOperator(BaseOperator):
         if not records:
             raise AirflowException("The query returned None")
         elif not all(bool(r) for r in records):
-            raise AirflowException(
-                "Test failed.\nQuery:\n{query}\nResults:\n{records!s}".format(
-                    query=self.sql, records=records
-                )
-            )
+            raise AirflowException(f"Test failed.\nQuery:\n{self.sql}\nResults:\n{records!s}")
 
         self.log.info("Success.")
-
-    def get_db_hook(self):
-        """
-        Get the database hook for the connection.
-
-        :return: the database hook object.
-        :rtype: DbApiHook
-        """
-        return BaseHook.get_hook(conn_id=self.conn_id)
 
 
 def _convert_to_float_if_possible(s):
@@ -118,7 +154,6 @@ def _convert_to_float_if_possible(s):
     if appropriate
 
     :param s: the string to be converted
-    :type s: str
     """
     try:
         ret = float(s)
@@ -127,42 +162,39 @@ def _convert_to_float_if_possible(s):
     return ret
 
 
-class SQLValueCheckOperator(BaseOperator):
+class SQLValueCheckOperator(BaseSQLOperator):
     """
     Performs a simple value check using sql code.
 
-    Note that this is an abstract class and get_db_hook
-    needs to be defined. Whereas a get_db_hook is hook that gets a
-    single record from an external source.
-
     :param sql: the sql to be executed. (templated)
-    :type sql: str
+    :param conn_id: the connection ID used to connect to the database.
+    :param database: name of database which overwrite the defined one in connection
     """
 
     __mapper_args__ = {"polymorphic_identity": "SQLValueCheckOperator"}
-    template_fields = (
+    template_fields: Sequence[str] = (
         "sql",
         "pass_value",
-    )  # type: Iterable[str]
-    template_ext = (
+    )
+    template_ext: Sequence[str] = (
         ".hql",
         ".sql",
-    )  # type: Iterable[str]
+    )
+    template_fields_renderers = {"sql": "sql"}
     ui_color = "#fff7e6"
 
-    @apply_defaults
     def __init__(
         self,
+        *,
         sql: str,
         pass_value: Any,
         tolerance: Any = None,
         conn_id: Optional[str] = None,
-        *args,
+        database: Optional[str] = None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(conn_id=conn_id, database=database, **kwargs)
         self.sql = sql
-        self.conn_id = conn_id
         self.pass_value = str(pass_value)
         tol = _convert_to_float_if_possible(tolerance)
         self.tol = tol if isinstance(tol, float) else None
@@ -196,9 +228,7 @@ class SQLValueCheckOperator(BaseOperator):
             try:
                 numeric_records = self._to_float(records)
             except (ValueError, TypeError):
-                raise AirflowException(
-                    "Converting a result to float failed.\n{}".format(error_msg)
-                )
+                raise AirflowException(f"Converting a result to float failed.\n{error_msg}")
             tests = self._get_numeric_matches(numeric_records, pass_value_conv)
         else:
             tests = []
@@ -221,30 +251,18 @@ class SQLValueCheckOperator(BaseOperator):
 
         return [record == numeric_pass_value_conv for record in numeric_records]
 
-    def get_db_hook(self):
-        """
-        Get the database hook for the connection.
 
-        :return: the database hook object.
-        :rtype: DbApiHook
-        """
-        return BaseHook.get_hook(conn_id=self.conn_id)
-
-
-class SQLIntervalCheckOperator(BaseOperator):
+class SQLIntervalCheckOperator(BaseSQLOperator):
     """
     Checks that the values of metrics given as SQL expressions are within
     a certain tolerance of the ones from days_back before.
 
-    Note that this is an abstract class and get_db_hook
-    needs to be defined. Whereas a get_db_hook is hook that gets a
-    single record from an external source.
-
     :param table: the table name
-    :type table: str
+    :param conn_id: the connection ID used to connect to the database.
+    :param database: name of database which will overwrite the defined one in connection
     :param days_back: number of days between ds and the ds we want to check
         against. Defaults to 7 days
-    :type days_back: int
+    :param date_filter_column: The column name for the dates to filter on. Defaults to 'ds'
     :param ratio_formula: which formula to use to compute the ratio between
         the two metrics. Assuming cur is the metric of today and ref is
         the metric to today - days_back.
@@ -253,16 +271,17 @@ class SQLIntervalCheckOperator(BaseOperator):
         relative_diff: computes abs(cur-ref) / ref
 
         Default: 'max_over_min'
-    :type ratio_formula: str
     :param ignore_zero: whether we should ignore zero metrics
-    :type ignore_zero: bool
-    :param metrics_threshold: a dictionary of ratios indexed by metrics
-    :type metrics_threshold: dict
+    :param metrics_thresholds: a dictionary of ratios indexed by metrics
     """
 
     __mapper_args__ = {"polymorphic_identity": "SQLIntervalCheckOperator"}
-    template_fields: Iterable[str] = ("sql1", "sql2")
-    template_ext: Iterable[str] = (".hql", ".sql",)
+    template_fields: Sequence[str] = ("sql1", "sql2")
+    template_ext: Sequence[str] = (
+        ".hql",
+        ".sql",
+    )
+    template_fields_renderers = {"sql1": "sql", "sql2": "sql"}
     ui_color = "#fff7e6"
 
     ratio_formulas = {
@@ -270,30 +289,25 @@ class SQLIntervalCheckOperator(BaseOperator):
         "relative_diff": lambda cur, ref: float(abs(cur - ref)) / ref,
     }
 
-    @apply_defaults
     def __init__(
         self,
+        *,
         table: str,
         metrics_thresholds: Dict[str, int],
         date_filter_column: Optional[str] = "ds",
         days_back: SupportsAbs[int] = -7,
         ratio_formula: Optional[str] = "max_over_min",
-        ignore_zero: Optional[bool] = True,
+        ignore_zero: bool = True,
         conn_id: Optional[str] = None,
-        *args,
+        database: Optional[str] = None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(conn_id=conn_id, database=database, **kwargs)
         if ratio_formula not in self.ratio_formulas:
-            msg_template = (
-                "Invalid diff_method: {diff_method}. "
-                "Supported diff methods are: {diff_methods}"
-            )
+            msg_template = "Invalid diff_method: {diff_method}. Supported diff methods are: {diff_methods}"
 
             raise AirflowException(
-                msg_template.format(
-                    diff_method=ratio_formula, diff_methods=self.ratio_formulas
-                )
+                msg_template.format(diff_method=ratio_formula, diff_methods=self.ratio_formulas)
             )
         self.ratio_formula = ratio_formula
         self.ignore_zero = ignore_zero
@@ -302,11 +316,8 @@ class SQLIntervalCheckOperator(BaseOperator):
         self.metrics_sorted = sorted(metrics_thresholds.keys())
         self.date_filter_column = date_filter_column
         self.days_back = -abs(days_back)
-        self.conn_id = conn_id
         sqlexp = ", ".join(self.metrics_sorted)
-        sqlt = "SELECT {sqlexp} FROM {table} WHERE {date_filter_column}=".format(
-            sqlexp=sqlexp, table=table, date_filter_column=date_filter_column
-        )
+        sqlt = f"SELECT {sqlexp} FROM {table} WHERE {date_filter_column}="
 
         self.sql1 = sqlt + "'{{ ds }}'"
         self.sql2 = sqlt + "'{{ macros.ds_add(ds, " + str(self.days_back) + ") }}'"
@@ -320,9 +331,9 @@ class SQLIntervalCheckOperator(BaseOperator):
         row1 = hook.get_first(self.sql1)
 
         if not row2:
-            raise AirflowException("The query {} returned None".format(self.sql2))
+            raise AirflowException(f"The query {self.sql2} returned None")
         if not row1:
-            raise AirflowException("The query {} returned None".format(self.sql1))
+            raise AirflowException(f"The query {self.sql1} returned None")
 
         current = dict(zip(self.metrics_sorted, row1))
         reference = dict(zip(self.metrics_sorted, row2))
@@ -338,9 +349,7 @@ class SQLIntervalCheckOperator(BaseOperator):
                 ratios[metric] = None
                 test_results[metric] = self.ignore_zero
             else:
-                ratios[metric] = self.ratio_formulas[self.ratio_formula](
-                    current[metric], reference[metric]
-                )
+                ratios[metric] = self.ratio_formulas[self.ratio_formula](current[metric], reference[metric])
                 test_results[metric] = ratios[metric] < threshold
 
             self.log.info(
@@ -373,61 +382,43 @@ class SQLIntervalCheckOperator(BaseOperator):
                     ratios[k],
                     self.metrics_thresholds[k],
                 )
-            raise AirflowException(
-                "The following tests have failed:\n {0}".format(
-                    ", ".join(sorted(failed_tests))
-                )
-            )
+            raise AirflowException(f"The following tests have failed:\n {', '.join(sorted(failed_tests))}")
 
         self.log.info("All tests have passed")
 
-    def get_db_hook(self):
-        """
-        Get the database hook for the connection.
 
-        :return: the database hook object.
-        :rtype: DbApiHook
-        """
-        return BaseHook.get_hook(conn_id=self.conn_id)
-
-
-class SQLThresholdCheckOperator(BaseOperator):
+class SQLThresholdCheckOperator(BaseSQLOperator):
     """
-    Performs a value check using sql code against a mininmum threshold
+    Performs a value check using sql code against a minimum threshold
     and a maximum threshold. Thresholds can be in the form of a numeric
     value OR a sql statement that results a numeric.
 
-    Note that this is an abstract class and get_db_hook
-    needs to be defined. Whereas a get_db_hook is hook that gets a
-    single record from an external source.
-
     :param sql: the sql to be executed. (templated)
-    :type sql: str
+    :param conn_id: the connection ID used to connect to the database.
+    :param database: name of database which overwrite the defined one in connection
     :param min_threshold: numerical value or min threshold sql to be executed (templated)
-    :type min_threshold: numeric or str
     :param max_threshold: numerical value or max threshold sql to be executed (templated)
-    :type max_threshold: numeric or str
     """
 
-    template_fields = ("sql", "min_threshold", "max_threshold")
-    template_ext = (
+    template_fields: Sequence[str] = ("sql", "min_threshold", "max_threshold")
+    template_ext: Sequence[str] = (
         ".hql",
         ".sql",
-    )  # type: Iterable[str]
+    )
+    template_fields_renderers = {"sql": "sql"}
 
-    @apply_defaults
     def __init__(
         self,
+        *,
         sql: str,
         min_threshold: Any,
         max_threshold: Any,
         conn_id: Optional[str] = None,
-        *args,
+        database: Optional[str] = None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(conn_id=conn_id, database=database, **kwargs)
         self.sql = sql
-        self.conn_id = conn_id
         self.min_threshold = _convert_to_float_if_possible(min_threshold)
         self.max_threshold = _convert_to_float_if_possible(max_threshold)
 
@@ -472,109 +463,56 @@ class SQLThresholdCheckOperator(BaseOperator):
         Optional: Send data check info and metadata to an external database.
         Default functionality will log metadata.
         """
-
-        info = "\n".join([f"""{key}: {item}""" for key, item in meta_data.items()])
+        info = "\n".join(f"""{key}: {item}""" for key, item in meta_data.items())
         self.log.info("Log from %s:\n%s", self.dag_id, info)
 
-    def get_db_hook(self):
-        """
-        Returns DB hook
-        """
-        return BaseHook.get_hook(conn_id=self.conn_id)
 
-
-class BranchSQLOperator(BaseOperator, SkipMixin):
+class BranchSQLOperator(BaseSQLOperator, SkipMixin):
     """
-    Executes sql code in a specific database
+    Allows a DAG to "branch" or follow a specified path based on the results of a SQL query.
 
-    :param sql: the sql code to be executed. (templated)
-    :type sql: Can receive a str representing a sql statement or reference to a template file.
-               Template reference are recognized by str ending in '.sql'.
-               Expected SQL query to return Boolean (True/False), integer (0 = False, Otherwise = 1)
-               or string (true/y/yes/1/on/false/n/no/0/off).
-    :param follow_task_ids_if_true: task id or task ids to follow if query return true
-    :type follow_task_ids_if_true: str or list
-    :param follow_task_ids_if_false: task id or task ids to follow if query return true
-    :type follow_task_ids_if_false: str or list
-    :param conn_id: reference to a specific database
-    :type conn_id: str
-    :param database: name of database which overwrite defined one in connection
+    :param sql: The SQL code to be executed, should return true or false (templated)
+       Template reference are recognized by str ending in '.sql'.
+       Expected SQL query to return Boolean (True/False), integer (0 = False, Otherwise = 1)
+       or string (true/y/yes/1/on/false/n/no/0/off).
+    :param follow_task_ids_if_true: task id or task ids to follow if query returns true
+    :param follow_task_ids_if_false: task id or task ids to follow if query returns false
+    :param conn_id: the connection ID used to connect to the database.
+    :param database: name of database which overwrite the defined one in connection
     :param parameters: (optional) the parameters to render the SQL query with.
-    :type parameters: mapping or iterable
     """
 
-    template_fields = ("sql",)
-    template_ext = (".sql",)
+    template_fields: Sequence[str] = ("sql",)
+    template_ext: Sequence[str] = (".sql",)
+    template_fields_renderers = {"sql": "sql"}
     ui_color = "#a22034"
     ui_fgcolor = "#F7F7F7"
 
-    @apply_defaults
     def __init__(
         self,
+        *,
         sql: str,
         follow_task_ids_if_true: List[str],
         follow_task_ids_if_false: List[str],
         conn_id: str = "default_conn_id",
         database: Optional[str] = None,
         parameters: Optional[Union[Mapping, Iterable]] = None,
-        *args,
         **kwargs,
     ) -> None:
-        super().__init__(**kwargs)
-        self.conn_id = conn_id
+        super().__init__(conn_id=conn_id, database=database, **kwargs)
         self.sql = sql
         self.parameters = parameters
         self.follow_task_ids_if_true = follow_task_ids_if_true
         self.follow_task_ids_if_false = follow_task_ids_if_false
-        self.database = database
-        self._hook = None
 
-    def _get_hook(self):
-        self.log.debug("Get connection for %s", self.conn_id)
-        conn = BaseHook.get_connection(self.conn_id)
-
-        if conn.conn_type not in ALLOWED_CONN_TYPE:
-            raise AirflowException(
-                "The connection type is not supported by BranchSQLOperator.\
-                Supported connection types: {}".format(list(ALLOWED_CONN_TYPE))
-            )
-
-        if not self._hook:
-            self._hook = conn.get_hook()
-            if self.database:
-                self._hook.schema = self.database
-
-        return self._hook
-
-    def execute(self, context: Dict):
-        # get supported hook
-        self._hook = self._get_hook()
-
-        if self._hook is None:
-            raise AirflowException(
-                "Failed to establish connection to '%s'" % self.conn_id
-            )
-
-        if self.sql is None:
-            raise AirflowException("Expected 'sql' parameter is missing.")
-
-        if self.follow_task_ids_if_true is None:
-            raise AirflowException(
-                "Expected 'follow_task_ids_if_true' paramter is missing."
-            )
-
-        if self.follow_task_ids_if_false is None:
-            raise AirflowException(
-                "Expected 'follow_task_ids_if_false' parameter is missing."
-            )
-
+    def execute(self, context: Context):
         self.log.info(
             "Executing: %s (with parameters %s) with connection: %s",
             self.sql,
             self.parameters,
-            self._hook,
+            self.conn_id,
         )
-        record = self._hook.get_first(self.sql, self.parameters)
+        record = self.get_db_hook().get_first(self.sql, self.parameters)
         if not record:
             raise AirflowException(
                 "No rows returned from sql query. Operator expected True or False return value."
@@ -599,23 +537,21 @@ class BranchSQLOperator(BaseOperator, SkipMixin):
                     follow_branch = self.follow_task_ids_if_true
             elif isinstance(query_result, str):
                 # return result is not Boolean, try to convert from String to Boolean
-                if bool(strtobool(query_result)):
+                if parse_boolean(query_result):
                     follow_branch = self.follow_task_ids_if_true
             elif isinstance(query_result, int):
                 if bool(query_result):
                     follow_branch = self.follow_task_ids_if_true
             else:
                 raise AirflowException(
-                    "Unexpected query return result '%s' type '%s'"
-                    % (query_result, type(query_result))
+                    f"Unexpected query return result '{query_result}' type '{type(query_result)}'"
                 )
 
             if follow_branch is None:
                 follow_branch = self.follow_task_ids_if_false
         except ValueError:
             raise AirflowException(
-                "Unexpected query return result '%s' type '%s'"
-                % (query_result, type(query_result))
+                f"Unexpected query return result '{query_result}' type '{type(query_result)}'"
             )
 
         self.skip_all_except(context["ti"], follow_branch)

@@ -17,15 +17,25 @@
 # under the License.
 
 LIBRARIES_DIR=$(dirname "${BASH_SOURCE[0]}")
+export LIBRARIES_DIR
+readonly LIBRARIES_DIR
 
+SCRIPTS_CI_DIR=$(cd "${LIBRARIES_DIR}/.." && pwd)
+export SCRIPTS_CI_DIR
+readonly SCRIPTS_CI_DIR
+
+# shellcheck source=scripts/ci/libraries/_traps.sh
+. "${LIBRARIES_DIR}"/_traps.sh
 # shellcheck source=scripts/ci/libraries/_initialization.sh
 . "${LIBRARIES_DIR}"/_initialization.sh
-
-
+# shellcheck source=scripts/ci/libraries/_parallel.sh
+. "${LIBRARIES_DIR}"/_parallel.sh
+# shellcheck source=scripts/ci/libraries/_docker_engine_resources.sh
+. "${LIBRARIES_DIR}"/_docker_engine_resources.sh
+# shellcheck source=scripts/ci/libraries/_repeats.sh
+. "${LIBRARIES_DIR}"/_repeats.sh
 # shellcheck source=scripts/ci/libraries/_sanity_checks.sh
 . "${LIBRARIES_DIR}"/_sanity_checks.sh
-# shellcheck source=scripts/ci/libraries/_build_images.sh
-. "${LIBRARIES_DIR}"/_build_images.sh
 # shellcheck source=scripts/ci/libraries/_kind.sh
 . "${LIBRARIES_DIR}"/_kind.sh
 # shellcheck source=scripts/ci/libraries/_local_mounts.sh
@@ -34,17 +44,11 @@ LIBRARIES_DIR=$(dirname "${BASH_SOURCE[0]}")
 . "${LIBRARIES_DIR}"/_md5sum.sh
 # shellcheck source=scripts/ci/libraries/_parameters.sh
 . "${LIBRARIES_DIR}"/_parameters.sh
-# shellcheck source=scripts/ci/libraries/_permissions.sh
-. "${LIBRARIES_DIR}"/_permissions.sh
 # shellcheck source=scripts/ci/libraries/_push_pull_remove_images.sh
 . "${LIBRARIES_DIR}"/_push_pull_remove_images.sh
-# shellcheck source=scripts/ci/libraries/_pylint.sh
-. "${LIBRARIES_DIR}"/_pylint.sh
-# shellcheck source=scripts/ci/libraries/_runs.sh
-. "${LIBRARIES_DIR}"/_runs.sh
-# shellcheck source=scripts/ci/libraries/_spinner.sh
-. "${LIBRARIES_DIR}"/_spinner.sh
 # shellcheck source=scripts/ci/libraries/_start_end.sh
 . "${LIBRARIES_DIR}"/_start_end.sh
+# shellcheck source=scripts/ci/libraries/_testing.sh
+. "${LIBRARIES_DIR}"/_testing.sh
 # shellcheck source=scripts/ci/libraries/_verbosity.sh
 . "${LIBRARIES_DIR}"/_verbosity.sh

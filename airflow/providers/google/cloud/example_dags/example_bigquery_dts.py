@@ -21,22 +21,18 @@ Example Airflow DAG that creates and deletes Bigquery data transfer configuratio
 """
 import os
 import time
-
-from google.cloud.bigquery_datatransfer_v1.types import TransferConfig
-from google.protobuf.json_format import ParseDict
+from datetime import datetime
 
 from airflow import models
 from airflow.providers.google.cloud.operators.bigquery_dts import (
-    BigQueryCreateDataTransferOperator, BigQueryDataTransferServiceStartTransferRunsOperator,
+    BigQueryCreateDataTransferOperator,
+    BigQueryDataTransferServiceStartTransferRunsOperator,
     BigQueryDeleteDataTransferConfigOperator,
 )
 from airflow.providers.google.cloud.sensors.bigquery_dts import BigQueryDataTransferServiceTransferRunSensor
-from airflow.utils.dates import days_ago
 
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "example-project")
-BUCKET_URI = os.environ.get(
-    "GCP_DTS_BUCKET_URI", "gs://cloud-ml-tables-data/bank-marketing.csv"
-)
+BUCKET_URI = os.environ.get("GCP_DTS_BUCKET_URI", "gs://INVALID BUCKET NAME/bank-marketing.csv")
 GCP_DTS_BQ_DATASET = os.environ.get("GCP_DTS_BQ_DATASET", "test_dts")
 GCP_DTS_BQ_TABLE = os.environ.get("GCP_DTS_BQ_TABLE", "GCS_Test")
 
@@ -56,23 +52,21 @@ PARAMS = {
     "file_format": "CSV",
 }
 
-TRANSFER_CONFIG = ParseDict(
-    {
-        "destination_dataset_id": GCP_DTS_BQ_DATASET,
-        "display_name": "GCS Test Config",
-        "data_source_id": "google_cloud_storage",
-        "schedule_options": schedule_options,
-        "params": PARAMS,
-    },
-    TransferConfig(),
-)
+TRANSFER_CONFIG = {
+    "destination_dataset_id": GCP_DTS_BQ_DATASET,
+    "display_name": "GCS Test Config",
+    "data_source_id": "google_cloud_storage",
+    "schedule_options": schedule_options,
+    "params": PARAMS,
+}
 
 # [END howto_bigquery_dts_create_args]
 
 with models.DAG(
     "example_gcp_bigquery_dts",
-    schedule_interval=None,  # Override to match your needs
-    start_date=days_ago(1),
+    schedule_interval='@once',  # Override to match your needs
+    start_date=datetime(2021, 1, 1),
+    catchup=False,
     tags=['example'],
 ) as dag:
     # [START howto_bigquery_create_data_transfer]
@@ -82,10 +76,7 @@ with models.DAG(
         task_id="gcp_bigquery_create_transfer",
     )
 
-    transfer_config_id = (
-        "{{ task_instance.xcom_pull('gcp_bigquery_create_transfer', "
-        "key='transfer_config_id') }}"
-    )
+    transfer_config_id = gcp_bigquery_create_transfer.output["transfer_config_id"]
     # [END howto_bigquery_create_data_transfer]
 
     # [START howto_bigquery_start_transfer]
@@ -94,16 +85,13 @@ with models.DAG(
         transfer_config_id=transfer_config_id,
         requested_run_time={"seconds": int(time.time() + 60)},
     )
-    run_id = (
-        "{{ task_instance.xcom_pull('gcp_bigquery_start_transfer', key='run_id') }}"
-    )
     # [END howto_bigquery_start_transfer]
 
     # [START howto_bigquery_dts_sensor]
     gcp_run_sensor = BigQueryDataTransferServiceTransferRunSensor(
         task_id="gcp_run_sensor",
         transfer_config_id=transfer_config_id,
-        run_id=run_id,
+        run_id=gcp_bigquery_start_transfer.output["run_id"],
         expected_statuses={"SUCCEEDED"},
     )
     # [END howto_bigquery_dts_sensor]
@@ -114,9 +102,10 @@ with models.DAG(
     )
     # [END howto_bigquery_delete_data_transfer]
 
-    (
-        gcp_bigquery_create_transfer  # noqa
-        >> gcp_bigquery_start_transfer  # noqa
-        >> gcp_run_sensor  # noqa
-        >> gcp_bigquery_delete_transfer  # noqa
-    )
+    gcp_run_sensor >> gcp_bigquery_delete_transfer
+
+    # Task dependencies created via `XComArgs`:
+    #   gcp_bigquery_create_transfer >> gcp_bigquery_start_transfer
+    #   gcp_bigquery_create_transfer >> gcp_run_sensor
+    #   gcp_bigquery_start_transfer >> gcp_run_sensor
+    #   gcp_bigquery_create_transfer >> gcp_bigquery_delete_transfer

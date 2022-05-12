@@ -15,16 +15,16 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-This module contains the Apache Livy operator.
-"""
+"""This module contains the Apache Livy operator."""
 from time import sleep
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Sequence, Union
 
 from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
 from airflow.providers.apache.livy.hooks.livy import BatchState, LivyHook
-from airflow.utils.decorators import apply_defaults
+
+if TYPE_CHECKING:
+    from airflow.utils.context import Context
 
 
 class LivyOperator(BaseOperator):
@@ -33,48 +33,35 @@ class LivyOperator(BaseOperator):
     application to the underlying cluster.
 
     :param file: path of the file containing the application to execute (required).
-    :type file: str
     :param class_name: name of the application Java/Spark main class.
-    :type class_name: str
     :param args: application command line arguments.
-    :type args: list
     :param jars: jars to be used in this sessions.
-    :type jars: list
     :param py_files: python files to be used in this session.
-    :type py_files: list
     :param files: files to be used in this session.
-    :type files: list
     :param driver_memory: amount of memory to use for the driver process.
-    :type driver_memory: str
     :param driver_cores: number of cores to use for the driver process.
-    :type driver_cores: str, int
     :param executor_memory: amount of memory to use per executor process.
-    :type executor_memory: str
     :param executor_cores: number of cores to use for each executor.
-    :type executor_cores: str, int
     :param num_executors: number of executors to launch for this session.
-    :type num_executors: str, int
     :param archives: archives to be used in this session.
-    :type archives: list
     :param queue: name of the YARN queue to which the application is submitted.
-    :type queue: str
     :param name: name of this session.
-    :type name: str
     :param conf: Spark configuration properties.
-    :type conf: dict
     :param proxy_user: user to impersonate when running the job.
-    :type proxy_user: str
     :param livy_conn_id: reference to a pre-defined Livy Connection.
-    :type livy_conn_id: str
     :param polling_interval: time in seconds between polling for job completion. Don't poll for values >=0
-    :type polling_interval: int
+    :param extra_options: A dictionary of options, where key is string and value
+        depends on the option that's being modified.
+    :param extra_headers: A dictionary of headers passed to the HTTP request to livy.
+    :param retry_args: Arguments which define the retry behaviour.
+            See Tenacity documentation at https://github.com/jd/tenacity
     """
 
-    template_fields = ('spark_params',)
+    template_fields: Sequence[str] = ('spark_params',)
 
-    @apply_defaults
     def __init__(
         self,
+        *,
         file: str,
         class_name: Optional[str] = None,
         args: Optional[Sequence[Union[str, int, float]]] = None,
@@ -93,9 +80,11 @@ class LivyOperator(BaseOperator):
         proxy_user: Optional[str] = None,
         livy_conn_id: str = 'livy_default',
         polling_interval: int = 0,
-        **kwargs: Any
+        extra_options: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, Any]] = None,
+        retry_args: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
     ) -> None:
-        # pylint: disable-msg=too-many-arguments
 
         super().__init__(**kwargs)
 
@@ -115,14 +104,17 @@ class LivyOperator(BaseOperator):
             'queue': queue,
             'name': name,
             'conf': conf,
-            'proxy_user': proxy_user
+            'proxy_user': proxy_user,
         }
 
         self._livy_conn_id = livy_conn_id
         self._polling_interval = polling_interval
+        self._extra_options = extra_options or {}
+        self._extra_headers = extra_headers or {}
 
         self._livy_hook: Optional[LivyHook] = None
         self._batch_id: Union[int, str]
+        self.retry_args = retry_args
 
     def get_hook(self) -> LivyHook:
         """
@@ -132,10 +124,14 @@ class LivyOperator(BaseOperator):
         :rtype: LivyHook
         """
         if self._livy_hook is None or not isinstance(self._livy_hook, LivyHook):
-            self._livy_hook = LivyHook(livy_conn_id=self._livy_conn_id)
+            self._livy_hook = LivyHook(
+                livy_conn_id=self._livy_conn_id,
+                extra_headers=self._extra_headers,
+                extra_options=self._extra_options,
+            )
         return self._livy_hook
 
-    def execute(self, context: Dict[Any, Any]) -> Any:
+    def execute(self, context: "Context") -> Any:
         self._batch_id = self.get_hook().post_batch(**self.spark_params)
 
         if self._polling_interval > 0:
@@ -148,24 +144,22 @@ class LivyOperator(BaseOperator):
         Pool Livy for batch termination.
 
         :param batch_id: id of the batch session to monitor.
-        :type batch_id: int
         """
         hook = self.get_hook()
-        state = hook.get_batch_state(batch_id)
+        state = hook.get_batch_state(batch_id, retry_args=self.retry_args)
         while state not in hook.TERMINAL_STATES:
             self.log.debug('Batch with id %s is in state: %s', batch_id, state.value)
             sleep(self._polling_interval)
-            state = hook.get_batch_state(batch_id)
+            state = hook.get_batch_state(batch_id, retry_args=self.retry_args)
         self.log.info("Batch with id %s terminated with state: %s", batch_id, state.value)
+        hook.dump_batch_logs(batch_id)
         if state != BatchState.SUCCESS:
-            raise AirflowException("Batch {} did not succeed".format(batch_id))
+            raise AirflowException(f"Batch {batch_id} did not succeed")
 
     def on_kill(self) -> None:
         self.kill()
 
     def kill(self) -> None:
-        """
-        Delete the current batch session.
-        """
+        """Delete the current batch session."""
         if self._batch_id is not None:
             self.get_hook().delete_batch(self._batch_id)

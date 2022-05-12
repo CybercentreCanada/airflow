@@ -17,6 +17,7 @@
 
 import datetime
 import inspect
+import json
 import typing
 
 import marshmallow
@@ -24,12 +25,14 @@ from dateutil import relativedelta
 from marshmallow import Schema, fields, validate
 from marshmallow_oneofschema import OneOfSchema
 
+from airflow.models.mappedoperator import MappedOperator
 from airflow.serialization.serialized_objects import SerializedBaseOperator
 from airflow.utils.weight_rule import WeightRule
 
 
 class CronExpression(typing.NamedTuple):
     """Cron expression schema"""
+
     value: str
 
 
@@ -44,7 +47,6 @@ class TimeDeltaSchema(Schema):
     @marshmallow.post_load
     def make_time_delta(self, data, **kwargs):
         """Create time delta based on data"""
-
         if "objectType" in data:
             del data["objectType"]
         return datetime.timedelta(**data)
@@ -73,7 +75,6 @@ class RelativeDeltaSchema(Schema):
     @marshmallow.post_load
     def make_relative_delta(self, data, **kwargs):
         """Create relative delta based on data"""
-
         if "objectType" in data:
             del data["objectType"]
 
@@ -83,7 +84,7 @@ class RelativeDeltaSchema(Schema):
 class CronExpressionSchema(Schema):
     """Cron expression schema"""
 
-    objectType = fields.Constant("CronExpression", data_key="__type", required=True)
+    objectType = fields.Constant("CronExpression", data_key="__type")
     value = fields.String(required=True)
 
     @marshmallow.post_load
@@ -102,6 +103,7 @@ class ScheduleIntervalSchema(OneOfSchema):
     * RelativeDelta
     * CronExpression
     """
+
     type_field = "__type"
     type_schemas = {
         "TimeDelta": TimeDeltaSchema,
@@ -124,25 +126,23 @@ class ScheduleIntervalSchema(OneOfSchema):
         elif isinstance(obj, CronExpression):
             return "CronExpression"
         else:
-            raise Exception("Unknown object type: {}".format(obj.__class__.__name__))
+            raise Exception(f"Unknown object type: {obj.__class__.__name__}")
 
 
 class ColorField(fields.String):
     """Schema for color property"""
+
     def __init__(self, **metadata):
         super().__init__(**metadata)
-        self.validators = (
-            [validate.Regexp("^#[a-fA-F0-9]{3,6}$")] + list(self.validators)
-        )
+        self.validators = [validate.Regexp("^#[a-fA-F0-9]{3,6}$")] + list(self.validators)
 
 
 class WeightRuleField(fields.String):
     """Schema for WeightRule"""
+
     def __init__(self, **metadata):
         super().__init__(**metadata)
-        self.validators = (
-            [validate.OneOf(WeightRule.all_weight_rules())] + list(self.validators)
-        )
+        self.validators = [validate.OneOf(WeightRule.all_weight_rules())] + list(self.validators)
 
 
 class TimezoneField(fields.String):
@@ -150,20 +150,33 @@ class TimezoneField(fields.String):
 
 
 class ClassReferenceSchema(Schema):
-    """
-    Class reference schema.
-    """
+    """Class reference schema."""
+
     module_path = fields.Method("_get_module", required=True)
     class_name = fields.Method("_get_class_name", required=True)
 
     def _get_module(self, obj):
-        if isinstance(obj, SerializedBaseOperator):
-            return obj._task_module  # pylint: disable=protected-access
+        if isinstance(obj, (MappedOperator, SerializedBaseOperator)):
+            return obj._task_module
         return inspect.getmodule(obj).__name__
 
     def _get_class_name(self, obj):
-        if isinstance(obj, SerializedBaseOperator):
-            return obj._task_type  # pylint: disable=protected-access
+        if isinstance(obj, (MappedOperator, SerializedBaseOperator)):
+            return obj._task_type
         if isinstance(obj, type):
             return obj.__name__
         return type(obj).__name__
+
+
+class JsonObjectField(fields.Field):
+    """JSON object field."""
+
+    def _serialize(self, value, attr, obj, **kwargs):
+        if not value:
+            return {}
+        return json.loads(value) if isinstance(value, str) else value
+
+    def _deserialize(self, value, attr, data, **kwargs):
+        if isinstance(value, str):
+            return json.loads(value)
+        return value

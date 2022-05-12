@@ -18,24 +18,33 @@
 """
 Example DAG using PostgresToGoogleCloudStorageOperator.
 """
+import os
+from datetime import datetime
+
 from airflow import models
 from airflow.providers.google.cloud.transfers.postgres_to_gcs import PostgresToGCSOperator
-from airflow.utils.dates import days_ago
 
-GCS_BUCKET = "postgres_to_gcs_example"
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "example-project")
+GCS_BUCKET = os.environ.get("GCP_GCS_BUCKET_NAME", "INVALID BUCKET NAME")
 FILENAME = "test_file"
 SQL_QUERY = "select * from test_table;"
 
 with models.DAG(
     dag_id='example_postgres_to_gcs',
-    schedule_interval=None,  # Override to match your needs
-    start_date=days_ago(1),
+    schedule_interval='@once',  # Override to match your needs
+    start_date=datetime(2021, 1, 1),
+    catchup=False,
     tags=['example'],
 ) as dag:
     upload_data = PostgresToGCSOperator(
-        task_id="get_data",
+        task_id="get_data", sql=SQL_QUERY, bucket=GCS_BUCKET, filename=FILENAME, gzip=False
+    )
+
+    upload_data_server_side_cursor = PostgresToGCSOperator(
+        task_id="get_data_with_server_side_cursor",
         sql=SQL_QUERY,
         bucket=GCS_BUCKET,
         filename=FILENAME,
-        gzip=False
+        gzip=False,
+        use_server_side_cursor=True,
     )

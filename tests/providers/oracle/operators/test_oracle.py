@@ -16,15 +16,14 @@
 # under the License.
 
 import unittest
-
-import mock
+from unittest import mock
 
 from airflow.providers.oracle.hooks.oracle import OracleHook
-from airflow.providers.oracle.operators.oracle import OracleOperator
+from airflow.providers.oracle.operators.oracle import OracleOperator, OracleStoredProcedureOperator
 
 
 class TestOracleOperator(unittest.TestCase):
-    @mock.patch.object(OracleHook, 'run')
+    @mock.patch.object(OracleHook, 'run', autospec=OracleHook.run)
     def test_execute(self, mock_run):
         sql = 'SELECT * FROM test_table'
         oracle_conn_id = 'oracle_default'
@@ -33,8 +32,43 @@ class TestOracleOperator(unittest.TestCase):
         context = "test_context"
         task_id = "test_task_id"
 
-        operator = OracleOperator(sql=sql, oracle_conn_id=oracle_conn_id, parameters=parameters,
-                                  autocommit=autocommit, task_id=task_id)
+        operator = OracleOperator(
+            sql=sql,
+            oracle_conn_id=oracle_conn_id,
+            parameters=parameters,
+            autocommit=autocommit,
+            task_id=task_id,
+        )
         operator.execute(context=context)
+        mock_run.assert_called_once_with(
+            mock.ANY,
+            sql,
+            autocommit=autocommit,
+            parameters=parameters,
+        )
 
-        mock_run.assert_called_once_with(sql, autocommit=autocommit, parameters=parameters)
+
+class TestOracleStoredProcedureOperator(unittest.TestCase):
+    @mock.patch.object(OracleHook, 'run', autospec=OracleHook.run)
+    def test_execute(self, mock_run):
+        procedure = 'test'
+        oracle_conn_id = 'oracle_default'
+        parameters = {'parameter': 'value'}
+        context = "test_context"
+        task_id = "test_task_id"
+
+        operator = OracleStoredProcedureOperator(
+            procedure=procedure,
+            oracle_conn_id=oracle_conn_id,
+            parameters=parameters,
+            task_id=task_id,
+        )
+        result = operator.execute(context=context)
+        assert result is mock_run.return_value
+        mock_run.assert_called_once_with(
+            mock.ANY,
+            'BEGIN test(:parameter); END;',
+            autocommit=True,
+            parameters=parameters,
+            handler=mock.ANY,
+        )

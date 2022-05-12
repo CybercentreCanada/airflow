@@ -21,24 +21,35 @@ Example Airflow DAG that uses Google AutoML services.
 """
 import os
 from copy import deepcopy
+from datetime import datetime
 from typing import Dict, List
 
 from airflow import models
 from airflow.providers.google.cloud.hooks.automl import CloudAutoMLHook
 from airflow.providers.google.cloud.operators.automl import (
-    AutoMLBatchPredictOperator, AutoMLCreateDatasetOperator, AutoMLDeleteDatasetOperator,
-    AutoMLDeleteModelOperator, AutoMLDeployModelOperator, AutoMLGetModelOperator, AutoMLImportDataOperator,
-    AutoMLListDatasetOperator, AutoMLPredictOperator, AutoMLTablesListColumnSpecsOperator,
-    AutoMLTablesListTableSpecsOperator, AutoMLTablesUpdateDatasetOperator, AutoMLTrainModelOperator,
+    AutoMLBatchPredictOperator,
+    AutoMLCreateDatasetOperator,
+    AutoMLDeleteDatasetOperator,
+    AutoMLDeleteModelOperator,
+    AutoMLDeployModelOperator,
+    AutoMLGetModelOperator,
+    AutoMLImportDataOperator,
+    AutoMLListDatasetOperator,
+    AutoMLPredictOperator,
+    AutoMLTablesListColumnSpecsOperator,
+    AutoMLTablesListTableSpecsOperator,
+    AutoMLTablesUpdateDatasetOperator,
+    AutoMLTrainModelOperator,
 )
-from airflow.utils.dates import days_ago
+
+START_DATE = datetime(2021, 1, 1)
 
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "your-project-id")
 GCP_AUTOML_LOCATION = os.environ.get("GCP_AUTOML_LOCATION", "us-central1")
 GCP_AUTOML_DATASET_BUCKET = os.environ.get(
-    "GCP_AUTOML_DATASET_BUCKET", "gs://cloud-ml-tables-data/bank-marketing.csv"
+    "GCP_AUTOML_DATASET_BUCKET", "gs://INVALID BUCKET NAME/bank-marketing.csv"
 )
-TARGET = os.environ.get("GCP_AUTOML_TARGET", "Class")
+TARGET = os.environ.get("GCP_AUTOML_TARGET", "Deposit")
 
 # Example values
 MODEL_ID = "TBL123456"
@@ -67,16 +78,17 @@ def get_target_column_spec(columns_specs: List[Dict], column_name: str) -> str:
     Using column name returns spec of the column.
     """
     for column in columns_specs:
-        if column["displayName"] == column_name:
+        if column["display_name"] == column_name:
             return extract_object_id(column)
-    return ""
+    raise Exception(f"Unknown target column: {column_name}")
 
 
 # Example DAG to create dataset, train model_id and deploy it.
 with models.DAG(
     "example_create_and_deploy",
-    schedule_interval=None,  # Override to match your needs
-    start_date=days_ago(1),
+    schedule_interval='@once',  # Override to match your needs
+    start_date=START_DATE,
+    catchup=False,
     user_defined_macros={
         "get_target_column_spec": get_target_column_spec,
         "target": TARGET,
@@ -92,9 +104,7 @@ with models.DAG(
         project_id=GCP_PROJECT_ID,
     )
 
-    dataset_id = (
-        "{{ task_instance.xcom_pull('create_dataset_task', key='dataset_id') }}"
-    )
+    dataset_id = create_dataset_task.output['dataset_id']
     # [END howto_operator_automl_create_dataset]
 
     MODEL["dataset_id"] = dataset_id
@@ -149,7 +159,7 @@ with models.DAG(
         project_id=GCP_PROJECT_ID,
     )
 
-    model_id = "{{ task_instance.xcom_pull('create_model_task', key='model_id') }}"
+    model_id = create_model_task.output['model_id']
     # [END howto_operator_automl_create_model]
 
     # [START howto_operator_automl_delete_model]
@@ -169,22 +179,29 @@ with models.DAG(
     )
 
     (
-        create_dataset_task  # noqa
-        >> import_dataset_task  # noqa
-        >> list_tables_spec_task  # noqa
-        >> list_columns_spec_task  # noqa
-        >> update_dataset_task  # noqa
-        >> create_model_task  # noqa
-        >> delete_model_task  # noqa
-        >> delete_datasets_task  # noqa
+        import_dataset_task
+        >> list_tables_spec_task
+        >> list_columns_spec_task
+        >> update_dataset_task
+        >> create_model_task
     )
+    delete_model_task >> delete_datasets_task
+
+    # Task dependencies created via `XComArgs`:
+    #   create_dataset_task >> import_dataset_task
+    #   create_dataset_task >> list_tables_spec_task
+    #   create_dataset_task >> list_columns_spec_task
+    #   create_dataset_task >> create_model_task
+    #   create_model_task >> delete_model_task
+    #   create_dataset_task >> delete_datasets_task
 
 
 # Example DAG for AutoML datasets operations
 with models.DAG(
     "example_automl_dataset",
-    schedule_interval=None,  # Override to match your needs
-    start_date=days_ago(1),
+    schedule_interval='@once',  # Override to match your needs
+    start_date=START_DATE,
+    catchup=False,
     user_defined_macros={"extract_object_id": extract_object_id},
 ) as example_dag:
     create_dataset_task = AutoMLCreateDatasetOperator(
@@ -194,9 +211,7 @@ with models.DAG(
         project_id=GCP_PROJECT_ID,
     )
 
-    dataset_id = (
-        '{{ task_instance.xcom_pull("create_dataset_task", key="dataset_id") }}'
-    )
+    dataset_id = create_dataset_task.output['dataset_id']
 
     import_dataset_task = AutoMLImportDataOperator(
         task_id="import_dataset_task",
@@ -238,18 +253,24 @@ with models.DAG(
     # [END howto_operator_delete_dataset]
 
     (
-        create_dataset_task  # noqa
-        >> import_dataset_task  # noqa
-        >> list_tables_spec_task  # noqa
-        >> list_columns_spec_task  # noqa
-        >> list_datasets_task  # noqa
-        >> delete_datasets_task  # noqa
+        import_dataset_task
+        >> list_tables_spec_task
+        >> list_columns_spec_task
+        >> list_datasets_task
+        >> delete_datasets_task
     )
+
+    # Task dependencies created via `XComArgs`:
+    # create_dataset_task >> import_dataset_task
+    # create_dataset_task >> list_tables_spec_task
+    # create_dataset_task >> list_columns_spec_task
+
 
 with models.DAG(
     "example_gcp_get_deploy",
-    schedule_interval=None,  # Override to match your needs
-    start_date=days_ago(1),
+    schedule_interval='@once',  # Override to match your needs
+    start_date=START_DATE,
+    catchup=False,
     tags=["example"],
 ) as get_deploy_dag:
     # [START howto_operator_get_model]
@@ -273,8 +294,9 @@ with models.DAG(
 
 with models.DAG(
     "example_gcp_predict",
-    schedule_interval=None,  # Override to match your needs
-    start_date=days_ago(1),
+    schedule_interval='@once',  # Override to match your needs
+    start_date=START_DATE,
+    catchup=False,
     tags=["example"],
 ) as predict_dag:
     # [START howto_operator_prediction]

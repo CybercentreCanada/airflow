@@ -16,10 +16,10 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-This module contains AWS SNS hook
-"""
+"""This module contains AWS SNS hook"""
 import json
+import warnings
+from typing import Dict, Optional, Union
 
 from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
 
@@ -33,11 +33,12 @@ def _get_message_attribute(o):
         return {'DataType': 'Number', 'StringValue': str(o)}
     if hasattr(o, '__iter__'):
         return {'DataType': 'String.Array', 'StringValue': json.dumps(o)}
-    raise TypeError('Values in MessageAttributes must be one of bytes, str, int, float, or iterable; '
-                    f'got {type(o)}')
+    raise TypeError(
+        f'Values in MessageAttributes must be one of bytes, str, int, float, or iterable; got {type(o)}'
+    )
 
 
-class AwsSnsHook(AwsBaseHook):
+class SnsHook(AwsBaseHook):
     """
     Interact with Amazon Simple Notification Service.
 
@@ -51,16 +52,20 @@ class AwsSnsHook(AwsBaseHook):
     def __init__(self, *args, **kwargs):
         super().__init__(client_type='sns', *args, **kwargs)
 
-    def publish_to_target(self, target_arn, message, subject=None, message_attributes=None):
+    def publish_to_target(
+        self,
+        target_arn: str,
+        message: str,
+        subject: Optional[str] = None,
+        message_attributes: Optional[dict] = None,
+    ):
         """
         Publish a message to a topic or an endpoint.
 
         :param target_arn: either a TopicArn or an EndpointArn
-        :type target_arn: str
         :param message: the default message you want to send
         :param message: str
         :param subject: subject of message
-        :type subject: str
         :param message_attributes: additional attributes to publish for message filtering. This should be
             a flat dict; the DataType to be sent depends on the type of the value:
 
@@ -69,14 +74,11 @@ class AwsSnsHook(AwsBaseHook):
             - int, float = Number
             - iterable = String.Array
 
-        :type message_attributes: dict
         """
-        publish_kwargs = {
+        publish_kwargs: Dict[str, Union[str, dict]] = {
             'TargetArn': target_arn,
             'MessageStructure': 'json',
-            'Message': json.dumps({
-                'default': message
-            }),
+            'Message': json.dumps({'default': message}),
         }
 
         # Construct args this way because boto3 distinguishes from missing args and those set to None
@@ -88,3 +90,18 @@ class AwsSnsHook(AwsBaseHook):
             }
 
         return self.get_conn().publish(**publish_kwargs)
+
+
+class AwsSnsHook(SnsHook):
+    """
+    This hook is deprecated.
+    Please use :class:`airflow.providers.amazon.aws.hooks.sns.SnsHook`.
+    """
+
+    def __init__(self, *args, **kwargs):
+        warnings.warn(
+            "This hook is deprecated. " "Please use :class:`airflow.providers.amazon.aws.hooks.sns.SnsHook`.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

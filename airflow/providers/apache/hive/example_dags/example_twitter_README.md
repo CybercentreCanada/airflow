@@ -16,6 +16,7 @@
  specific language governing permissions and limitations
  under the License.
 -->
+
 # Example Twitter DAG
 
 ***Introduction:*** This example dag depicts a typical ETL process and is a perfect use case automation scenario for Airflow. Please note that the main scripts associated with the tasks are returning None. The purpose of this DAG is to demonstrate how to write a functional DAG within Airflow.
@@ -34,7 +35,7 @@
 ***Screenshot:***
 <img src="http://i.imgur.com/rRpSO12.png" width="99%"/>
 
-***Example Structure:*** In this example dag, we are collecting tweets for four users account or twitter handle. Each twitter handle has two channels, incoming tweets and outgoing tweets. Hence, in this example, by running the fetch_tweet task, we should have eight output files. For better management, each of the eight output files should be saved with the yesterday's date (we are collecting tweets from yesterday), i.e. toTwitter_A_2016-03-21.csv. We are using three kind of operators: PythonOperator, BashOperator, and HiveOperator. However, for this example only the Python scripts are stored externally. Hence this example DAG only has the following directory structure:
+***Example Structure:*** In this example dag, we are collecting tweets for four users account or twitter handle. Each twitter handle has two channels, incoming tweets and outgoing tweets. Hence, in this example, by running the fetch_tweet task, we should have eight output files. For better management, each of the eight output files should be saved with the yesterday's date (we are collecting tweets from yesterday), i.e. toTwitter_A_2016-03-21.csv. We are using two kinds of operators (BashOperator and HiveOperator) along with task-decorated functions. However, for this example only the Python scripts are stored externally. Hence this example DAG only has the following directory structure:
 
 The python functions here are just placeholders. In case you are interested to actually make this DAG fully functional, first start with filling out the scripts as separate files and importing them into the DAG with absolute or relative import. My approach was to store the retrieved data in memory using Pandas dataframe first, and then use the built in method to save the CSV file on hard-disk.
 The eight different CSV files are then put into eight different folders within HDFS. Each of the newly inserted files are then loaded into eight different external hive tables. Hive tables can be external or internal. In this case, we are inserting the data right into the table, and so we are making our tables internal. Each file is inserted into the respected Hive table named after the twitter channel, i.e. toTwitter_A or fromTwitter_A. It is also important to note that when we created the tables, we facilitated for partitioning by date using the variable dt and declared comma as the row deliminator. The partitioning is very handy and ensures our query execution time remains constant even with growing volume of data.
@@ -49,8 +50,5 @@ CREATE TABLE toTwitter_A(id BIGINT, id_str STRING
                          alter table toTwitter_A SET serdeproperties ('skip.header.line.count' = '1');
 ```
 
-When you review the code for the DAG, you will notice that these tasks are generated using for loop. These two for loops could be combined into one loop. However, in most cases, you will be running different analysis on your incoming incoming and outgoing tweets, and hence they are kept separated in this example.
+When you review the code for the DAG, you will notice that these tasks are generated using for loop. These two for loops could be combined into one loop. However, in most cases, you will be running different analysis on your incoming and outgoing tweets, and hence they are kept separated in this example.
 Final step is a running the broker script, brokerapi.py, which will run queries in Hive and store the summarized data to MySQL in our case. To connect to Hive, pyhs2 library is extremely useful and easy to use. To insert data into MySQL from Python, sqlalchemy is also a good one to use.
-I hope you find this tutorial useful. If you have question feel free to ask me on [Twitter](https://twitter.com/EkhtiarSyed) or via the live Airflow chatroom room in [Gitter](https://gitter.im/apache/airflow).<p>
--Ekhtiar Syed
-Last Update: 8-April-2016

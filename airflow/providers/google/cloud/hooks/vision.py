@@ -15,53 +15,56 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""
-This module contains a Google Cloud Vision Hook.
-"""
-
+"""This module contains a Google Cloud Vision Hook."""
+import sys
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
-from cached_property import cached_property
+from airflow.providers.google.common.consts import CLIENT_INFO
+
+if sys.version_info >= (3, 8):
+    from functools import cached_property
+else:
+    from cached_property import cached_property
+
+from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
 from google.api_core.retry import Retry
 from google.cloud.vision_v1 import ImageAnnotatorClient, ProductSearchClient
 from google.cloud.vision_v1.types import (
-    AnnotateImageRequest, FieldMask, Image, Product, ProductSet, ReferenceImage,
+    AnnotateImageRequest,
+    FieldMask,
+    Image,
+    Product,
+    ProductSet,
+    ReferenceImage,
 )
 from google.protobuf.json_format import MessageToDict
 
 from airflow.exceptions import AirflowException
-from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
+from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
 
-ERR_DIFF_NAMES = \
-    """The {label} name provided in the object ({explicit_name}) is different than the name created
-    from the input parameters ({constructed_name}). Please either:
+ERR_DIFF_NAMES = """The {label} name provided in the object ({explicit_name}) is different
+    than the name created from the input parameters ({constructed_name}). Please either:
     1) Remove the {label} name,
     2) Remove the location and {id_label} parameters,
     3) Unify the {label} name and input parameters.
     """
 
-ERR_UNABLE_TO_CREATE = \
-    """Unable to determine the {label} name. Please either set the name directly
+ERR_UNABLE_TO_CREATE = """Unable to determine the {label} name. Please either set the name directly
     in the {label} object or provide the `location` and `{id_label}` parameters.
     """
 
 
 class NameDeterminer:
-    """
-    Helper class to determine entity name.
-    """
+    """Helper class to determine entity name."""
+
     def __init__(self, label: str, id_label: str, get_path: Callable[[str, str, str], str]) -> None:
         self.label = label
         self.id_label = id_label
         self.get_path = get_path
 
     def get_entity_with_name(
-        self,
-        entity: Any,
-        entity_id: Optional[str],
-        location: Optional[str],
-        project_id: str
+        self, entity: Any, entity_id: Optional[str], location: Optional[str], project_id: str
     ) -> Any:
         """
         Check if entity has the `name` attribute set:
@@ -79,13 +82,9 @@ class NameDeterminer:
 
 
         :param entity: Entity
-        :type entity: any
         :param entity_id: Entity id
-        :type entity_id: str
         :param location: Location
-        :type location: str
         :param project_id: The id of Google Cloud Vision project.
-        :type project_id: str
         :return: The same entity or entity with new name
         :rtype: str
         :raises: AirflowException
@@ -100,20 +99,20 @@ class NameDeterminer:
                 return entity
 
             if explicit_name != constructed_name:
-                raise AirflowException(ERR_DIFF_NAMES.format(
-                    label=self.label,
-                    explicit_name=explicit_name,
-                    constructed_name=constructed_name,
-                    id_label=self.id_label)
+                raise AirflowException(
+                    ERR_DIFF_NAMES.format(
+                        label=self.label,
+                        explicit_name=explicit_name,
+                        constructed_name=constructed_name,
+                        id_label=self.id_label,
+                    )
                 )
 
         # Not enough parameters to construct the name. Trying to use the name from Product / ProductSet.
         if explicit_name:
             return entity
         else:
-            raise AirflowException(
-                ERR_UNABLE_TO_CREATE.format(label=self.label, id_label=self.id_label)
-            )
+            raise AirflowException(ERR_UNABLE_TO_CREATE.format(label=self.label, id_label=self.id_label))
 
 
 class CloudVisionHook(GoogleBaseHook):
@@ -150,10 +149,7 @@ class CloudVisionHook(GoogleBaseHook):
         :rtype: google.cloud.vision_v1.ProductSearchClient
         """
         if not self._client:
-            self._client = ProductSearchClient(
-                credentials=self._get_credentials(),
-                client_info=self.client_info
-            )
+            self._client = ProductSearchClient(credentials=self._get_credentials(), client_info=CLIENT_INFO)
         return self._client
 
     @cached_property
@@ -176,11 +172,11 @@ class CloudVisionHook(GoogleBaseHook):
         self,
         location: str,
         product_set: Union[dict, ProductSet],
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         product_set_id: Optional[str] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> str:
         """
         For the documentation see:
@@ -212,10 +208,11 @@ class CloudVisionHook(GoogleBaseHook):
         self,
         location: str,
         product_set_id: str,
-        project_id: str,
-        retry: Optional[Retry] = None,
-        timeout: Optional[float] = None, metadata: Optional[Sequence[Tuple[str, str]]] = None
-    ) -> Dict:
+        project_id: str = PROVIDE_PROJECT_ID,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
+    ) -> dict:
         """
         For the documentation see:
         :class:`~airflow.providers.google.cloud.operators.vision.CloudVisionGetProductSetOperator`
@@ -232,14 +229,14 @@ class CloudVisionHook(GoogleBaseHook):
     def update_product_set(
         self,
         product_set: Union[dict, ProductSet],
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         location: Optional[str] = None,
         product_set_id: Optional[str] = None,
         update_mask: Union[dict, FieldMask] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None,
-    ) -> Dict:
+        metadata: Sequence[Tuple[str, str]] = (),
+    ) -> dict:
         """
         For the documentation see:
         :class:`~airflow.providers.google.cloud.operators.vision.CloudVisionUpdateProductSetOperator`
@@ -261,11 +258,11 @@ class CloudVisionHook(GoogleBaseHook):
         self,
         location: str,
         product_set_id: str,
-        project_id: str,
-        retry: Optional[Retry] = None,
+        project_id: str = PROVIDE_PROJECT_ID,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None
-    ):
+        metadata: Sequence[Tuple[str, str]] = (),
+    ) -> None:
         """
         For the documentation see:
         :class:`~airflow.providers.google.cloud.operators.vision.CloudVisionDeleteProductSetOperator`
@@ -281,11 +278,11 @@ class CloudVisionHook(GoogleBaseHook):
         self,
         location: str,
         product: Union[dict, Product],
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         product_id: Optional[str] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None
+        metadata: Sequence[Tuple[str, str]] = (),
     ):
         """
         For the documentation see:
@@ -317,10 +314,10 @@ class CloudVisionHook(GoogleBaseHook):
         self,
         location: str,
         product_id: str,
-        project_id: str,
-        retry: Optional[Retry] = None,
+        project_id: str = PROVIDE_PROJECT_ID,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None
+        metadata: Sequence[Tuple[str, str]] = (),
     ):
         """
         For the documentation see:
@@ -338,13 +335,13 @@ class CloudVisionHook(GoogleBaseHook):
     def update_product(
         self,
         product: Union[dict, Product],
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         location: Optional[str] = None,
         product_id: Optional[str] = None,
         update_mask: Optional[Dict[str, FieldMask]] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ):
         """
         For the documentation see:
@@ -365,11 +362,11 @@ class CloudVisionHook(GoogleBaseHook):
         self,
         location: str,
         product_id: str,
-        project_id: str,
-        retry: Optional[Retry] = None,
+        project_id: str = PROVIDE_PROJECT_ID,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None
-    ):
+        metadata: Sequence[Tuple[str, str]] = (),
+    ) -> None:
         """
         For the documentation see:
         :class:`~airflow.providers.google.cloud.operators.vision.CloudVisionDeleteProductOperator`
@@ -385,12 +382,12 @@ class CloudVisionHook(GoogleBaseHook):
         self,
         location: str,
         product_id: str,
-        reference_image: Union[Dict, ReferenceImage],
+        reference_image: Union[dict, ReferenceImage],
         project_id: str,
         reference_image_id: Optional[str] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> str:
         """
         For the documentation see:
@@ -428,10 +425,10 @@ class CloudVisionHook(GoogleBaseHook):
         product_id: str,
         reference_image_id: str,
         project_id: str,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None,
-    ) -> Dict:
+        metadata: Sequence[Tuple[str, str]] = (),
+    ) -> dict:
         """
         For the documentation see:
         :py:class:`~airflow.providers.google.cloud.operators.vision.CloudVisionDeleteReferenceImageOperator`
@@ -441,10 +438,13 @@ class CloudVisionHook(GoogleBaseHook):
         name = ProductSearchClient.reference_image_path(
             project=project_id, location=location, product=product_id, reference_image=reference_image_id
         )
-        response = client.delete_reference_image(name=name,  # pylint: disable=assignment-from-no-return
-                                                 retry=retry,
-                                                 timeout=timeout,
-                                                 metadata=metadata)
+
+        response = client.delete_reference_image(
+            name=name,
+            retry=retry,
+            timeout=timeout,
+            metadata=metadata,
+        )
 
         self.log.info('ReferenceImage with the name [%s] deleted.', name)
         return MessageToDict(response)
@@ -456,9 +456,9 @@ class CloudVisionHook(GoogleBaseHook):
         product_id: str,
         project_id: str,
         location: Optional[str] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> None:
         """
         For the documentation see:
@@ -484,13 +484,13 @@ class CloudVisionHook(GoogleBaseHook):
         product_id: str,
         project_id: str,
         location: Optional[str] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        metadata: Optional[Sequence[Tuple[str, str]]] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> None:
         """
         For the documentation see:
-        :py:class:`~airflow.providers.google.cloud.operators.vision.CloudVisionRemoveProductFromProductSetOperator` # pylint: disable=line-too-long # noqa
+        :py:class:`~airflow.providers.google.cloud.operators.vision.CloudVisionRemoveProductFromProductSetOperator`
         """
         client = self.get_conn()
 
@@ -508,8 +508,8 @@ class CloudVisionHook(GoogleBaseHook):
     def annotate_image(
         self,
         request: Union[dict, AnnotateImageRequest],
-        retry: Optional[Retry] = None,
-        timeout: Optional[float] = None
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
     ) -> Dict:
         """
         For the documentation see:
@@ -519,7 +519,6 @@ class CloudVisionHook(GoogleBaseHook):
 
         self.log.info('Annotating image')
 
-        # pylint: disable=no-member
         response = client.annotate_image(request=request, retry=retry, timeout=timeout)
 
         self.log.info('Image annotated')
@@ -530,9 +529,9 @@ class CloudVisionHook(GoogleBaseHook):
     def batch_annotate_images(
         self,
         requests: Union[List[dict], List[AnnotateImageRequest]],
-        retry: Optional[Retry] = None,
-        timeout: Optional[float] = None
-    ) -> Dict:
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+    ) -> dict:
         """
         For the documentation see:
         :py:class:`~airflow.providers.google.cloud.operators.vision.CloudVisionImageAnnotateOperator`
@@ -541,9 +540,7 @@ class CloudVisionHook(GoogleBaseHook):
 
         self.log.info('Annotating images')
 
-        response = client.batch_annotate_images(requests=requests,  # pylint: disable=no-member
-                                                retry=retry,
-                                                timeout=timeout)
+        response = client.batch_annotate_images(requests=requests, retry=retry, timeout=timeout)
 
         self.log.info('Images annotated')
 
@@ -552,12 +549,12 @@ class CloudVisionHook(GoogleBaseHook):
     @GoogleBaseHook.quota_retry()
     def text_detection(
         self,
-        image: Union[Dict, Image],
+        image: Union[dict, Image],
         max_results: Optional[int] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        additional_properties: Optional[Dict] = None
-    ) -> Dict:
+        additional_properties: Optional[Dict] = None,
+    ) -> dict:
         """
         For the documentation see:
         :py:class:`~airflow.providers.google.cloud.operators.vision.CloudVisionDetectTextOperator`
@@ -569,7 +566,7 @@ class CloudVisionHook(GoogleBaseHook):
         if additional_properties is None:
             additional_properties = {}
 
-        response = client.text_detection(  # pylint: disable=no-member
+        response = client.text_detection(
             image=image, max_results=max_results, retry=retry, timeout=timeout, **additional_properties
         )
         response = MessageToDict(response)
@@ -582,12 +579,12 @@ class CloudVisionHook(GoogleBaseHook):
     @GoogleBaseHook.quota_retry()
     def document_text_detection(
         self,
-        image: Union[Dict, Image],
+        image: Union[dict, Image],
         max_results: Optional[int] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        additional_properties: Optional[Dict] = None
-    ) -> Dict:
+        additional_properties: Optional[dict] = None,
+    ) -> dict:
         """
         For the documentation see:
         :py:class:`~airflow.providers.google.cloud.operators.vision.CloudVisionTextDetectOperator`
@@ -599,7 +596,7 @@ class CloudVisionHook(GoogleBaseHook):
         if additional_properties is None:
             additional_properties = {}
 
-        response = client.document_text_detection(  # pylint: disable=no-member
+        response = client.document_text_detection(
             image=image, max_results=max_results, retry=retry, timeout=timeout, **additional_properties
         )
         response = MessageToDict(response)
@@ -612,12 +609,12 @@ class CloudVisionHook(GoogleBaseHook):
     @GoogleBaseHook.quota_retry()
     def label_detection(
         self,
-        image: Union[Dict, Image],
+        image: Union[dict, Image],
         max_results: Optional[int] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        additional_properties: Optional[Dict] = None
-    ) -> Dict:
+        additional_properties: Optional[dict] = None,
+    ) -> dict:
         """
         For the documentation see:
         :py:class:`~airflow.providers.google.cloud.operators.vision.CloudVisionDetectImageLabelsOperator`
@@ -629,7 +626,7 @@ class CloudVisionHook(GoogleBaseHook):
         if additional_properties is None:
             additional_properties = {}
 
-        response = client.label_detection(  # pylint: disable=no-member
+        response = client.label_detection(
             image=image, max_results=max_results, retry=retry, timeout=timeout, **additional_properties
         )
         response = MessageToDict(response)
@@ -642,12 +639,12 @@ class CloudVisionHook(GoogleBaseHook):
     @GoogleBaseHook.quota_retry()
     def safe_search_detection(
         self,
-        image: Union[Dict, Image],
+        image: Union[dict, Image],
         max_results: Optional[int] = None,
-        retry: Optional[Retry] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
         timeout: Optional[float] = None,
-        additional_properties: Optional[Dict] = None
-    ) -> Dict:
+        additional_properties: Optional[dict] = None,
+    ) -> dict:
         """
         For the documentation see:
         :py:class:`~airflow.providers.google.cloud.operators.vision.CloudVisionDetectImageSafeSearchOperator`
@@ -659,7 +656,7 @@ class CloudVisionHook(GoogleBaseHook):
         if additional_properties is None:
             additional_properties = {}
 
-        response = client.safe_search_detection(  # pylint: disable=no-member
+        response = client.safe_search_detection(
             image=image, max_results=max_results, retry=retry, timeout=timeout, **additional_properties
         )
         response = MessageToDict(response)
@@ -673,7 +670,7 @@ class CloudVisionHook(GoogleBaseHook):
         try:
             name = response.name
         except AttributeError as e:
-            raise AirflowException('Unable to get name from response... [{}]\n{}'.format(response, e))
+            raise AirflowException(f'Unable to get name from response... [{response}]\n{e}')
         if '/' not in name:
-            raise AirflowException('Unable to get id from name... [{}]'.format(name))
+            raise AirflowException(f'Unable to get id from name... [{name}]')
         return name.rsplit('/', 1)[1]

@@ -18,29 +18,31 @@
 Example Airflow DAG that shows how to use Google Analytics 360.
 """
 import os
+from datetime import datetime
 
 from airflow import models
 from airflow.providers.google.marketing_platform.operators.analytics import (
-    GoogleAnalyticsDataImportUploadOperator, GoogleAnalyticsDeletePreviousDataUploadsOperator,
-    GoogleAnalyticsGetAdsLinkOperator, GoogleAnalyticsListAccountsOperator,
-    GoogleAnalyticsModifyFileHeadersDataImportOperator, GoogleAnalyticsRetrieveAdsLinksListOperator,
+    GoogleAnalyticsDataImportUploadOperator,
+    GoogleAnalyticsDeletePreviousDataUploadsOperator,
+    GoogleAnalyticsGetAdsLinkOperator,
+    GoogleAnalyticsListAccountsOperator,
+    GoogleAnalyticsModifyFileHeadersDataImportOperator,
+    GoogleAnalyticsRetrieveAdsLinksListOperator,
 )
-from airflow.utils import dates
 
 ACCOUNT_ID = os.environ.get("GA_ACCOUNT_ID", "123456789")
 
 BUCKET = os.environ.get("GMP_ANALYTICS_BUCKET", "test-airflow-analytics-bucket")
 BUCKET_FILENAME = "data.csv"
 WEB_PROPERTY_ID = os.environ.get("GA_WEB_PROPERTY", "UA-12345678-1")
-WEB_PROPERTY_AD_WORDS_LINK_ID = os.environ.get(
-    "GA_WEB_PROPERTY_AD_WORDS_LINK_ID", "rQafFTPOQdmkx4U-fxUfhj"
-)
+WEB_PROPERTY_AD_WORDS_LINK_ID = os.environ.get("GA_WEB_PROPERTY_AD_WORDS_LINK_ID", "rQafFTPOQdmkx4U-fxUfhj")
 DATA_ID = "kjdDu3_tQa6n8Q1kXFtSmg"
 
 with models.DAG(
     "example_google_analytics",
-    schedule_interval=None,  # Override to match your needs,
-    start_date=dates.days_ago(1),
+    schedule_interval='@once',  # Override to match your needs,
+    start_date=datetime(2021, 1, 1),
+    catchup=False,
 ) as dag:
     # [START howto_marketing_platform_list_accounts_operator]
     list_account = GoogleAnalyticsListAccountsOperator(task_id="list_account")

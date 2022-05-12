@@ -16,15 +16,23 @@
  specific language governing permissions and limitations
  under the License.
 -->
-Airflow OpenAPI clients
-=======================
+
+# Airflow OpenAPI clients
 
 Supported languages:
 
 * [Golang](https://github.com/apache/airflow-client-go) generated through `./gen/go.sh`.
-
+* [Python](https://github.com/apache/airflow-client-python) generated through `./gen/python.sh`.
 
 ## Dependencies
 
 All client generation scripts use [pre-commit](https://pre-commit.com/#install)
 to prepend license header to generated code.
+
+## Usage
+
+To generate Go client, run:
+
+```
+bash ./gen/go.sh ../airflow/api_connexion/openapi/v1.yaml AIRFLOW_CLIENT_GO_REPO_PATH/airflow
+```

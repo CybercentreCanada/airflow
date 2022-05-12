@@ -24,28 +24,19 @@ from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
 
 
 class GoogleAnalyticsHook(GoogleBaseHook):
-    """
-    Hook for Google Analytics 360.
-    """
+    """Hook for Google Analytics 360."""
 
-    def __init__(
-        self,
-        api_version: str = "v3",
-        gcp_conn_id: str = "google_cloud_default",
-        *args,
-        **kwargs
-    ):
+    def __init__(self, api_version: str = "v3", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.api_version = api_version
-        self.gcp_connection_is = gcp_conn_id
         self._conn = None
 
-    def _paginate(self, resource: Resource, list_args: Optional[Dict[str, Any]] = None):
+    def _paginate(self, resource: Resource, list_args: Optional[Dict[str, Any]] = None) -> List[dict]:
         list_args = list_args or {}
-        result: List[Dict] = []
+        result: List[dict] = []
         while True:
             # start index has value 1
-            request = resource.list(start_index=len(result) + 1, **list_args)  # pylint: disable=no-member
+            request = resource.list(start_index=len(result) + 1, **list_args)
             response = request.execute(num_retries=self.num_retries)
             result.extend(response.get("items", []))
             # result is the number of fetched links from Analytics
@@ -56,9 +47,7 @@ class GoogleAnalyticsHook(GoogleBaseHook):
         return result
 
     def get_conn(self) -> Resource:
-        """
-        Retrieves connection to Google Analytics 360.
-        """
+        """Retrieves connection to Google Analytics 360."""
         if not self._conn:
             http_authorized = self._authorize()
             self._conn = build(
@@ -70,13 +59,10 @@ class GoogleAnalyticsHook(GoogleBaseHook):
         return self._conn
 
     def list_accounts(self) -> List[Dict[str, Any]]:
-        """
-        Lists accounts list from Google Analytics 360.
-        """
-
+        """Lists accounts list from Google Analytics 360."""
         self.log.info("Retrieving accounts list...")
         conn = self.get_conn()
-        accounts = conn.management().accounts()  # pylint: disable=no-member
+        accounts = conn.management().accounts()
         result = self._paginate(accounts)
         return result
 
@@ -87,19 +73,15 @@ class GoogleAnalyticsHook(GoogleBaseHook):
         Returns a web property-Google Ads link to which the user has access.
 
         :param account_id: ID of the account which the given web property belongs to.
-        :type account_id: string
         :param web_property_id: Web property-Google Ads link UA-string.
-        :type web_property_id: string
         :param web_property_ad_words_link_id: to retrieve the Google Ads link for.
-        :type web_property_ad_words_link_id: string
 
         :returns: web property-Google Ads
         :rtype: Dict
         """
-
         self.log.info("Retrieving ad words links...")
         ad_words_link = (
-            self.get_conn()  # pylint: disable=no-member
+            self.get_conn()
             .management()
             .webPropertyAdWordsLinks()
             .get(
@@ -111,26 +93,19 @@ class GoogleAnalyticsHook(GoogleBaseHook):
         )
         return ad_words_link
 
-    def list_ad_words_links(
-        self, account_id: str, web_property_id: str
-    ) -> List[Dict[str, Any]]:
+    def list_ad_words_links(self, account_id: str, web_property_id: str) -> List[Dict[str, Any]]:
         """
         Lists webProperty-Google Ads links for a given web property.
 
         :param account_id: ID of the account which the given web property belongs to.
-        :type account_id: str
         :param web_property_id: Web property UA-string to retrieve the Google Ads links for.
-        :type web_property_id: str
 
         :returns: list of entity Google Ads links.
         :rtype: list
         """
-
         self.log.info("Retrieving ad words list...")
         conn = self.get_conn()
-        ads_links = (
-            conn.management().webPropertyAdWordsLinks()  # pylint: disable=no-member
-        )
+        ads_links = conn.management().webPropertyAdWordsLinks()
         list_args = {"accountId": account_id, "webPropertyId": web_property_id}
         result = self._paginate(ads_links, list_args)
         return result
@@ -147,18 +122,12 @@ class GoogleAnalyticsHook(GoogleBaseHook):
         Uploads file to GA via the Data Import API
 
         :param file_location: The path and name of the file to upload.
-        :type file_location: str
         :param account_id: The GA account Id to which the data upload belongs.
-        :type account_id: str
         :param web_property_id: UA-string associated with the upload.
-        :type web_property_id: str
         :param custom_data_source_id: Custom Data Source Id to which this data import belongs.
-        :type custom_data_source_id: str
         :param resumable_upload: flag to upload the file in a resumable fashion, using a
             series of at least two requests.
-        :type resumable_upload: bool
         """
-
         media = MediaFileUpload(
             file_location,
             mimetype="application/octet-stream",
@@ -172,7 +141,7 @@ class GoogleAnalyticsHook(GoogleBaseHook):
             custom_data_source_id,
         )
 
-        self.get_conn().management().uploads().uploadData(  # pylint: disable=no-member
+        self.get_conn().management().uploads().uploadData(
             accountId=account_id,
             webPropertyId=web_property_id,
             customDataSourceId=custom_data_source_id,
@@ -190,15 +159,10 @@ class GoogleAnalyticsHook(GoogleBaseHook):
         Deletes the uploaded data for a given account/property/dataset
 
         :param account_id: The GA account Id to which the data upload belongs.
-        :type account_id: str
         :param web_property_id: UA-string associated with the upload.
-        :type web_property_id: str
         :param custom_data_source_id: Custom Data Source Id to which this data import belongs.
-        :type custom_data_source_id: str
         :param delete_request_body: Dict of customDataImportUids to delete.
-        :type delete_request_body: dict
         """
-
         self.log.info(
             "Deleting previous uploads to GA file for accountId:%s, "
             "webPropertyId:%s and customDataSourceId:%s ",
@@ -207,25 +171,20 @@ class GoogleAnalyticsHook(GoogleBaseHook):
             custom_data_source_id,
         )
 
-        self.get_conn().management().uploads().deleteUploadData(  # pylint: disable=no-member
+        self.get_conn().management().uploads().deleteUploadData(
             accountId=account_id,
             webPropertyId=web_property_id,
             customDataSourceId=custom_data_source_id,
             body=delete_request_body,
         ).execute()
 
-    def list_uploads(
-        self, account_id, web_property_id, custom_data_source_id
-    ) -> List[Dict[str, Any]]:
+    def list_uploads(self, account_id, web_property_id, custom_data_source_id) -> List[Dict[str, Any]]:
         """
         Get list of data upload from GA
 
         :param account_id: The GA account Id to which the data upload belongs.
-        :type account_id: str
         :param web_property_id: UA-string associated with the upload.
-        :type web_property_id: str
         :param custom_data_source_id: Custom Data Source Id to which this data import belongs.
-        :type custom_data_source_id: str
         """
         self.log.info(
             "Getting list of uploads for accountId:%s, webPropertyId:%s and customDataSourceId:%s ",
@@ -234,7 +193,7 @@ class GoogleAnalyticsHook(GoogleBaseHook):
             custom_data_source_id,
         )
 
-        uploads = self.get_conn().management().uploads()  # pylint: disable=no-member
+        uploads = self.get_conn().management().uploads()
         list_args = {
             "accountId": account_id,
             "webPropertyId": web_property_id,

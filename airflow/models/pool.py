@@ -21,16 +21,18 @@ from typing import Dict, Iterable, Optional, Tuple
 from sqlalchemy import Column, Integer, String, Text, func
 from sqlalchemy.orm.session import Session
 
-from airflow.exceptions import AirflowException
+from airflow.exceptions import AirflowException, PoolNotFound
 from airflow.models.base import Base
 from airflow.ti_deps.dependencies_states import EXECUTION_STATES
 from airflow.typing_compat import TypedDict
-from airflow.utils.session import provide_session
+from airflow.utils.session import NEW_SESSION, provide_session
+from airflow.utils.sqlalchemy import nowait, with_row_locks
 from airflow.utils.state import State
 
 
 class PoolStats(TypedDict):
-    """ Dictionary containing Pool Stats """
+    """Dictionary containing Pool Stats"""
+
     total: int
     running: int
     queued: int
@@ -38,9 +40,8 @@ class PoolStats(TypedDict):
 
 
 class Pool(Base):
-    """
-    the class to get Pool info.
-    """
+    """the class to get Pool info."""
+
     __tablename__ = "slot_pool"
 
     id = Column(Integer, primary_key=True)
@@ -52,11 +53,17 @@ class Pool(Base):
     DEFAULT_POOL_NAME = 'default_pool'
 
     def __repr__(self):
-        return str(self.pool)    # pylint: disable=E0012
+        return str(self.pool)
 
     @staticmethod
     @provide_session
-    def get_pool(pool_name, session: Session = None):
+    def get_pools(session: Session = NEW_SESSION):
+        """Get all pools."""
+        return session.query(Pool).all()
+
+    @staticmethod
+    @provide_session
+    def get_pool(pool_name: str, session: Session = NEW_SESSION):
         """
         Get the Pool with specific pool name from the Pools.
 
@@ -68,7 +75,7 @@ class Pool(Base):
 
     @staticmethod
     @provide_session
-    def get_default_pool(session: Session = None):
+    def get_default_pool(session: Session = NEW_SESSION):
         """
         Get the Pool of the default_pool from the Pools.
 
@@ -79,29 +86,98 @@ class Pool(Base):
 
     @staticmethod
     @provide_session
-    def slots_stats(session: Session = None) -> Dict[str, PoolStats]:
+    def is_default_pool(id: int, session: Session = NEW_SESSION) -> bool:
+        """
+        Check id if is the default_pool.
+
+        :param id: pool id
+        :param session: SQLAlchemy ORM Session
+        :return: True if id is default_pool, otherwise False
+        """
+        return (
+            session.query(func.count(Pool.id))
+            .filter(Pool.id == id, Pool.pool == Pool.DEFAULT_POOL_NAME)
+            .scalar()
+            > 0
+        )
+
+    @staticmethod
+    @provide_session
+    def create_or_update_pool(name: str, slots: int, description: str, session: Session = NEW_SESSION):
+        """Create a pool with given parameters or update it if it already exists."""
+        if not name:
+            return
+        pool = session.query(Pool).filter_by(pool=name).first()
+        if pool is None:
+            pool = Pool(pool=name, slots=slots, description=description)
+            session.add(pool)
+        else:
+            pool.slots = slots
+            pool.description = description
+
+        session.commit()
+
+        return pool
+
+    @staticmethod
+    @provide_session
+    def delete_pool(name: str, session: Session = NEW_SESSION):
+        """Delete pool by a given name."""
+        if name == Pool.DEFAULT_POOL_NAME:
+            raise AirflowException(f"{Pool.DEFAULT_POOL_NAME} cannot be deleted")
+
+        pool = session.query(Pool).filter_by(pool=name).first()
+        if pool is None:
+            raise PoolNotFound(f"Pool '{name}' doesn't exist")
+
+        session.delete(pool)
+        session.commit()
+
+        return pool
+
+    @staticmethod
+    @provide_session
+    def slots_stats(
+        *,
+        lock_rows: bool = False,
+        session: Session = NEW_SESSION,
+    ) -> Dict[str, PoolStats]:
         """
         Get Pool stats (Number of Running, Queued, Open & Total tasks)
 
+        If ``lock_rows`` is True, and the database engine in use supports the ``NOWAIT`` syntax, then a
+        non-blocking lock will be attempted -- if the lock is not available then SQLAlchemy will throw an
+        OperationalError.
+
+        :param lock_rows: Should we attempt to obtain a row-level lock on all the Pool rows returns
         :param session: SQLAlchemy ORM Session
         """
         from airflow.models.taskinstance import TaskInstance  # Avoid circular import
 
         pools: Dict[str, PoolStats] = {}
 
-        pool_rows: Iterable[Tuple[str, int]] = session.query(Pool.pool, Pool.slots).all()
+        query = session.query(Pool.pool, Pool.slots)
+
+        if lock_rows:
+            query = with_row_locks(query, session=session, **nowait(session))
+
+        pool_rows: Iterable[Tuple[str, int]] = query.all()
         for (pool_name, total_slots) in pool_rows:
+            if total_slots == -1:
+                total_slots = float('inf')  # type: ignore
             pools[pool_name] = PoolStats(total=total_slots, running=0, queued=0, open=0)
 
         state_count_by_pool = (
-            session.query(TaskInstance.pool, TaskInstance.state, func.count())
+            session.query(TaskInstance.pool, TaskInstance.state, func.sum(TaskInstance.pool_slots))
             .filter(TaskInstance.state.in_(list(EXECUTION_STATES)))
             .group_by(TaskInstance.pool, TaskInstance.state)
         ).all()
 
         # calculate queued and running metrics
-        count: int
         for (pool_name, state, count) in state_count_by_pool:
+            # Some databases return decimal.Decimal here.
+            count = int(count)
+
             stats_dict: Optional[PoolStats] = pools.get(pool_name)
             if not stats_dict:
                 continue
@@ -111,17 +187,11 @@ class Pool(Base):
             elif state == "queued":
                 stats_dict["queued"] = count
             else:
-                raise AirflowException(
-                    f"Unexpected state. Expected values: {EXECUTION_STATES}."
-                )
+                raise AirflowException(f"Unexpected state. Expected values: {EXECUTION_STATES}.")
 
         # calculate open metric
         for pool_name, stats_dict in pools.items():
-            if stats_dict["total"] == -1:
-                # -1 means infinite
-                stats_dict["open"] = -1
-            else:
-                stats_dict["open"] = stats_dict["total"] - stats_dict["running"] - stats_dict["queued"]
+            stats_dict["open"] = stats_dict["total"] - stats_dict["running"] - stats_dict["queued"]
 
         return pools
 
@@ -139,7 +209,7 @@ class Pool(Base):
         }
 
     @provide_session
-    def occupied_slots(self, session: Session):
+    def occupied_slots(self, session: Session = NEW_SESSION):
         """
         Get the number of slots used by running/queued tasks at the moment.
 
@@ -147,16 +217,17 @@ class Pool(Base):
         :return: the used number of slots
         """
         from airflow.models.taskinstance import TaskInstance  # Avoid circular import
-        return (
-            session
-            .query(func.sum(TaskInstance.pool_slots))
+
+        return int(
+            session.query(func.sum(TaskInstance.pool_slots))
             .filter(TaskInstance.pool == self.pool)
             .filter(TaskInstance.state.in_(list(EXECUTION_STATES)))
             .scalar()
-        ) or 0
+            or 0
+        )
 
     @provide_session
-    def running_slots(self, session: Session):
+    def running_slots(self, session: Session = NEW_SESSION):
         """
         Get the number of slots used by running tasks at the moment.
 
@@ -165,16 +236,16 @@ class Pool(Base):
         """
         from airflow.models.taskinstance import TaskInstance  # Avoid circular import
 
-        return (
-            session
-            .query(func.sum(TaskInstance.pool_slots))
+        return int(
+            session.query(func.sum(TaskInstance.pool_slots))
             .filter(TaskInstance.pool == self.pool)
             .filter(TaskInstance.state == State.RUNNING)
             .scalar()
-        ) or 0
+            or 0
+        )
 
     @provide_session
-    def queued_slots(self, session: Session):
+    def queued_slots(self, session: Session = NEW_SESSION):
         """
         Get the number of slots used by queued tasks at the moment.
 
@@ -183,16 +254,16 @@ class Pool(Base):
         """
         from airflow.models.taskinstance import TaskInstance  # Avoid circular import
 
-        return (
-            session
-            .query(func.sum(TaskInstance.pool_slots))
+        return int(
+            session.query(func.sum(TaskInstance.pool_slots))
             .filter(TaskInstance.pool == self.pool)
             .filter(TaskInstance.state == State.QUEUED)
             .scalar()
-        ) or 0
+            or 0
+        )
 
     @provide_session
-    def open_slots(self, session: Session) -> float:
+    def open_slots(self, session: Session = NEW_SESSION) -> float:
         """
         Get the number of slots open at the moment.
 

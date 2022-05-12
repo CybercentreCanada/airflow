@@ -15,20 +15,26 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import unittest
 from unittest import mock
 
 from airflow.models import DAG
 from airflow.providers.snowflake.transfers.snowflake_to_slack import SnowflakeToSlackOperator
 from airflow.utils import timezone
+from tests.test_utils.db import clear_db_runs
 
 TEST_DAG_ID = 'snowflake_to_slack_unit_test'
 DEFAULT_DATE = timezone.datetime(2017, 1, 1)
 
 
-class TestSnowflakeToSlackOperator(unittest.TestCase):
-    def setUp(self):
+class TestSnowflakeToSlackOperator:
+    def setup_class(self):
+        clear_db_runs()
+
+    def setup_method(self):
         self.example_dag = DAG('unit_test_dag_snowflake_to_slack', start_date=DEFAULT_DATE)
+
+    def teardown_method(self):
+        clear_db_runs()
 
     @staticmethod
     def _construct_operator(**kwargs):
@@ -50,7 +56,7 @@ class TestSnowflakeToSlackOperator(unittest.TestCase):
             'parameters': ['1', '2', '3'],
             'slack_message': 'message: {{ ds }}, {{ xxxx }}',
             'slack_token': 'test_token',
-            'dag': self.example_dag
+            'dag': self.example_dag,
         }
         snowflake_to_slack_operator = self._construct_operator(**operator_args)
 
@@ -61,20 +67,22 @@ class TestSnowflakeToSlackOperator(unittest.TestCase):
         snowflake_to_slack_operator.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE, ignore_ti_state=True)
 
         # Test that the Snowflake hook is instantiated with the right parameters
-        mock_snowflake_hook_class.assert_called_once_with(database='test_database',
-                                                          role='test_role',
-                                                          schema='test_schema',
-                                                          snowflake_conn_id='snowflake_connection',
-                                                          warehouse='test_warehouse')
+        mock_snowflake_hook_class.assert_called_once_with(
+            database='test_database',
+            role='test_role',
+            schema='test_schema',
+            snowflake_conn_id='snowflake_connection',
+            warehouse='test_warehouse',
+        )
 
-        # Test that the get_pandas_df method is executed on the Snowflake hook with the prendered sql and
+        # Test that the get_pandas_df method is executed on the Snowflake hook with the pre-rendered sql and
         # correct params
         snowflake_hook.get_pandas_df.assert_called_once_with('sql 2017-01-01', parameters=['1', '2', '3'])
 
         # Test that the Slack hook is instantiated with the right parameters
-        mock_slack_hook_class.assert_called_once_with(http_conn_id='slack_connection',
-                                                      message='message: 2017-01-01, 1234',
-                                                      webhook_token='test_token')
+        mock_slack_hook_class.assert_called_once_with(
+            http_conn_id='slack_connection', message='message: 2017-01-01, 1234', webhook_token='test_token'
+        )
 
         # Test that the Slack hook's execute method gets run once
         slack_webhook_hook.execute.assert_called_once()

@@ -16,16 +16,16 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-This module contains operator to move data from Hive to Druid.
-"""
+"""This module contains operator to move data from Hive to Druid."""
 
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence
 
 from airflow.models import BaseOperator
 from airflow.providers.apache.druid.hooks.druid import DruidHook
 from airflow.providers.apache.hive.hooks.hive import HiveCliHook, HiveMetastoreHook
-from airflow.utils.decorators import apply_defaults
+
+if TYPE_CHECKING:
+    from airflow.utils.context import Context
 
 LOAD_CHECK_INTERVAL = 5
 DEFAULT_TARGET_PARTITION_SIZE = 5000000
@@ -38,53 +38,39 @@ class HiveToDruidOperator(BaseOperator):
     be used for smallish amount of data.[/del]
 
     :param sql: SQL query to execute against the Druid database. (templated)
-    :type sql: str
     :param druid_datasource: the datasource you want to ingest into in druid
-    :type druid_datasource: str
     :param ts_dim: the timestamp dimension
-    :type ts_dim: str
     :param metric_spec: the metrics you want to define for your data
-    :type metric_spec: list
     :param hive_cli_conn_id: the hive connection id
-    :type hive_cli_conn_id: str
     :param druid_ingest_conn_id: the druid ingest connection id
-    :type druid_ingest_conn_id: str
     :param metastore_conn_id: the metastore connection id
-    :type metastore_conn_id: str
     :param hadoop_dependency_coordinates: list of coordinates to squeeze
         int the ingest json
-    :type hadoop_dependency_coordinates: list[str]
     :param intervals: list of time intervals that defines segments,
         this is passed as is to the json object. (templated)
-    :type intervals: list
     :param num_shards: Directly specify the number of shards to create.
-    :type num_shards: float
     :param target_partition_size: Target number of rows to include in a partition,
-    :type target_partition_size: int
     :param query_granularity: The minimum granularity to be able to query results at and the granularity of
         the data inside the segment. E.g. a value of "minute" will mean that data is aggregated at minutely
         granularity. That is, if there are collisions in the tuple (minute(timestamp), dimensions), then it
         will aggregate values together using the aggregators instead of storing individual rows.
         A granularity of 'NONE' means millisecond granularity.
-    :type query_granularity: str
     :param segment_granularity: The granularity to create time chunks at. Multiple segments can be created per
         time chunk. For example, with 'DAY' segmentGranularity, the events of the same day fall into the
         same time chunk which can be optionally further partitioned into multiple segments based on other
         configurations and input size.
-    :type segment_granularity: str
     :param hive_tblproperties: additional properties for tblproperties in
         hive for the staging table
-    :type hive_tblproperties: dict
     :param job_properties: additional properties for job
-    :type job_properties: dict
     """
 
-    template_fields = ('sql', 'intervals')
-    template_ext = ('.sql',)
+    template_fields: Sequence[str] = ('sql', 'intervals')
+    template_ext: Sequence[str] = ('.sql',)
+    template_fields_renderers = {'sql': 'hql'}
 
-    @apply_defaults
-    def __init__(  # pylint: disable=too-many-arguments
+    def __init__(
         self,
+        *,
         sql: str,
         druid_datasource: str,
         ts_dim: str,
@@ -100,7 +86,7 @@ class HiveToDruidOperator(BaseOperator):
         segment_granularity: str = "DAY",
         hive_tblproperties: Optional[Dict[Any, Any]] = None,
         job_properties: Optional[Dict[Any, Any]] = None,
-        **kwargs: Any
+        **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.sql = sql
@@ -111,9 +97,7 @@ class HiveToDruidOperator(BaseOperator):
         self.target_partition_size = target_partition_size
         self.query_granularity = query_granularity
         self.segment_granularity = segment_granularity
-        self.metric_spec = metric_spec or [{
-            "name": "count",
-            "type": "count"}]
+        self.metric_spec = metric_spec or [{"name": "count", "type": "count"}]
         self.hive_cli_conn_id = hive_cli_conn_id
         self.hadoop_dependency_coordinates = hadoop_dependency_coordinates
         self.druid_ingest_conn_id = druid_ingest_conn_id
@@ -121,14 +105,12 @@ class HiveToDruidOperator(BaseOperator):
         self.hive_tblproperties = hive_tblproperties or {}
         self.job_properties = job_properties
 
-    def execute(self, context: Dict[str, Any]) -> None:
+    def execute(self, context: "Context") -> None:
         hive = HiveCliHook(hive_cli_conn_id=self.hive_cli_conn_id)
         self.log.info("Extracting data from Hive")
         hive_table = 'druid.' + context['task_instance_key_str'].replace('.', '_')
         sql = self.sql.strip().strip(';')
-        tblproperties = ''.join([", '{}' = '{}'"
-                                .format(k, v)
-                                 for k, v in self.hive_tblproperties.items()])
+        tblproperties = ''.join(f", '{k}' = '{v}'" for k, v in self.hive_tblproperties.items())
         hql = f"""\
         SET mapred.output.compress=false;
         SET hive.exec.compress.output=false;
@@ -166,24 +148,17 @@ class HiveToDruidOperator(BaseOperator):
 
             self.log.info("Load seems to have succeeded!")
         finally:
-            self.log.info(
-                "Cleaning up by dropping the temp Hive table %s",
-                hive_table
-            )
-            hql = "DROP TABLE IF EXISTS {}".format(hive_table)
+            self.log.info("Cleaning up by dropping the temp Hive table %s", hive_table)
+            hql = f"DROP TABLE IF EXISTS {hive_table}"
             hive.run_cli(hql)
 
-    def construct_ingest_query(self, static_path: str,
-                               columns: List[str]) -> Dict[str, Any]:
+    def construct_ingest_query(self, static_path: str, columns: List[str]) -> Dict[str, Any]:
         """
         Builds an ingest query for an HDFS TSV load.
 
         :param static_path: The path on hdfs where the data is
-        :type static_path: str
         :param columns: List of all the columns that are available
-        :type columns: list
         """
-
         # backward compatibility for num_shards,
         # but target_partition_size is the default setting
         # and overwrites the num_shards
@@ -219,16 +194,13 @@ class HiveToDruidOperator(BaseOperator):
                             "dimensionsSpec": {
                                 "dimensionExclusions": [],
                                 "dimensions": dimensions,  # list of names
-                                "spatialDimensions": []
+                                "spatialDimensions": [],
                             },
-                            "timestampSpec": {
-                                "column": self.ts_dim,
-                                "format": "auto"
-                            },
-                            "format": "tsv"
-                        }
+                            "timestampSpec": {"column": self.ts_dim, "format": "auto"},
+                            "format": "tsv",
+                        },
                     },
-                    "dataSource": self.druid_datasource
+                    "dataSource": self.druid_datasource,
                 },
                 "tuningConfig": {
                     "type": "hadoop",
@@ -243,22 +215,14 @@ class HiveToDruidOperator(BaseOperator):
                         "numShards": num_shards,
                     },
                 },
-                "ioConfig": {
-                    "inputSpec": {
-                        "paths": static_path,
-                        "type": "static"
-                    },
-                    "type": "hadoop"
-                }
-            }
+                "ioConfig": {"inputSpec": {"paths": static_path, "type": "static"}, "type": "hadoop"},
+            },
         }
 
         if self.job_properties:
-            ingest_query_dict['spec']['tuningConfig']['jobProperties'] \
-                .update(self.job_properties)
+            ingest_query_dict['spec']['tuningConfig']['jobProperties'].update(self.job_properties)
 
         if self.hadoop_dependency_coordinates:
-            ingest_query_dict['hadoopDependencyCoordinates'] \
-                = self.hadoop_dependency_coordinates
+            ingest_query_dict['hadoopDependencyCoordinates'] = self.hadoop_dependency_coordinates
 
         return ingest_query_dict

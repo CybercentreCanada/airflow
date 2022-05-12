@@ -20,33 +20,29 @@
 
 
 class FakeTI:
-
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
 
     def get_dagrun(self, _):
-        return self.dagrun  # pylint: disable=no-member
+        return self.dagrun
 
-    def are_dependents_done(self, session):  # pylint: disable=unused-argument
-        return self.dependents_done  # pylint: disable=no-member
+    def are_dependents_done(self, session):
+        return self.dependents_done
 
 
 class FakeTask:
-
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
 
 
 class FakeDag:
-
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
 
     def get_running_dagruns(self, _):
-        return self.running_dagruns  # pylint: disable=no-member
+        return self.running_dagruns
 
 
 class FakeContext:
-
     def __init__(self, **kwds):
         self.__dict__.update(kwds)

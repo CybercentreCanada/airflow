@@ -14,22 +14,21 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-import io
 import json
 import os
 import sys
 from ast import Import, ImportFrom, NodeVisitor, parse
 from collections import defaultdict
 from os.path import dirname, sep
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from setup import PROVIDERS_REQUIREMENTS
 
 sys.path.append(os.path.join(dirname(__file__), os.pardir))
 
 
-AIRFLOW_PROVIDERS_FILE_PREFIX = "airflow" + sep + "providers" + sep
-AIRFLOW_TESTS_PROVIDERS_FILE_PREFIX = "tests" + sep + "providers" + sep
+AIRFLOW_PROVIDERS_FILE_PREFIX = f"airflow{sep}providers{sep}"
+AIRFLOW_TESTS_PROVIDERS_FILE_PREFIX = f"tests{sep}providers{sep}"
 AIRFLOW_PROVIDERS_IMPORT_PREFIX = "airflow.providers."
 
 # List of information messages generated
@@ -46,7 +45,7 @@ dependencies: Dict[str, List[str]] = defaultdict(list)
 def find_provider(provider_elements: List[str]) -> Optional[str]:
     """
     Finds provider name from the list of elements provided. It looks the providers up
-    in PROVIDERS_DEPENDENCIES map taken from the provider's package setup.
+    in PROVIDERS_REQUIREMENTS dict taken from the setup.py.
 
     :param provider_elements: array of elements of the path (split)
     :return: provider name or None if no provider could be found
@@ -68,12 +67,15 @@ def get_provider_from_file_name(file_name: str) -> Optional[str]:
     :param file_name: name of the file
     :return: provider name or None if no provider could be found
     """
-    if AIRFLOW_PROVIDERS_FILE_PREFIX not in file_name and \
-            AIRFLOW_TESTS_PROVIDERS_FILE_PREFIX not in file_name:
+    if (
+        AIRFLOW_PROVIDERS_FILE_PREFIX not in file_name
+        and AIRFLOW_TESTS_PROVIDERS_FILE_PREFIX not in file_name
+    ):
         # We should only check file that are provider
         errors.append(f"Wrong file not in the providers package = {file_name}")
         return None
     suffix = get_file_suffix(file_name)
+    assert suffix
     split_path = suffix.split(sep)[2:]
     provider = find_provider(split_path)
     if not provider and file_name.endswith("__init__.py"):
@@ -83,11 +85,11 @@ def get_provider_from_file_name(file_name: str) -> Optional[str]:
     return provider
 
 
-def get_file_suffix(file_name):
+def get_file_suffix(file_name) -> Optional[str]:
     if AIRFLOW_PROVIDERS_FILE_PREFIX in file_name:
-        return file_name[file_name.find(AIRFLOW_PROVIDERS_FILE_PREFIX):]
+        return file_name[file_name.find(AIRFLOW_PROVIDERS_FILE_PREFIX) :]
     if AIRFLOW_TESTS_PROVIDERS_FILE_PREFIX in file_name:
-        return file_name[file_name.find(AIRFLOW_TESTS_PROVIDERS_FILE_PREFIX):]
+        return file_name[file_name.find(AIRFLOW_TESTS_PROVIDERS_FILE_PREFIX) :]
     return None
 
 
@@ -100,7 +102,7 @@ def get_provider_from_import(import_name: str) -> Optional[str]:
     if AIRFLOW_PROVIDERS_IMPORT_PREFIX not in import_name:
         # skip silently - we expect non-providers imports
         return None
-    suffix = import_name[import_name.find(AIRFLOW_PROVIDERS_IMPORT_PREFIX):]
+    suffix = import_name[import_name.find(AIRFLOW_PROVIDERS_IMPORT_PREFIX) :]
     split_import = suffix.split(".")[2:]
     provider = find_provider(split_import)
     if not provider:
@@ -112,16 +114,16 @@ class ImportFinder(NodeVisitor):
     """
     AST visitor that collects all imported names in its imports
     """
-    def __init__(self, filename):
+
+    def __init__(self, filename: str) -> None:
         self.imports: List[str] = []
         self.filename = filename
         self.handled_import_exception = List[str]
         self.tried_imports: List[str] = []
 
-    def process_import(self, import_name: str):
+    def process_import(self, import_name: str) -> None:
         self.imports.append(import_name)
 
-    # noinspection PyMethodMayBeStatic
     def get_import_name_from_import_from(self, node: ImportFrom) -> List[str]:
         """
         Retrieves import name from the "from" import.
@@ -131,17 +133,15 @@ class ImportFinder(NodeVisitor):
         import_names: List[str] = []
         for alias in node.names:
             name = alias.name
-            fullname = '%s.%s' % (node.module, name) if node.module else name
+            fullname = f'{node.module}.{name}' if node.module else name
             import_names.append(fullname)
         return import_names
 
-    # noinspection PyPep8Naming
-    def visit_Import(self, node: Import):  # pylint: disable=invalid-name
+    def visit_Import(self, node: Import):
         for alias in node.names:
             self.process_import(alias.name)
 
-    # noinspection PyPep8Naming
-    def visit_ImportFrom(self, node: ImportFrom):  # pylint: disable=invalid-name
+    def visit_ImportFrom(self, node: ImportFrom):
         if node.module == '__future__':
             return
         for fullname in self.get_import_name_from_import_from(node):
@@ -155,7 +155,7 @@ def get_imports_from_file(file_name: str) -> List[str]:
     :return: list of import names
     """
     try:
-        with io.open(file_name, "rt", encoding="utf-8") as f:
+        with open(file_name, encoding="utf-8") as f:
             root = parse(f.read(), file_name)
     except Exception:
         print(f"Error when opening file {file_name}", file=sys.stderr)
@@ -165,7 +165,7 @@ def get_imports_from_file(file_name: str) -> List[str]:
     return visitor.imports
 
 
-def check_if_different_provider_used(file_name: str):
+def check_if_different_provider_used(file_name: str) -> None:
     file_provider = get_provider_from_file_name(file_name)
     if not file_provider:
         return
@@ -176,14 +176,18 @@ def check_if_different_provider_used(file_name: str):
             dependencies[file_provider].append(import_provider)
 
 
-def parse_arguments():
+def parse_arguments() -> Tuple[str, str, str]:
     import argparse
+
     parser = argparse.ArgumentParser(
-        description='Checks if dependencies between packages are handled correctly.')
-    parser.add_argument("-f", "--provider-dependencies-file",
-                        help="Stores dependencies between providers in the file")
-    parser.add_argument("-d", "--documentation-file",
-                        help="Updates package documentation in the file specified (.rst)")
+        description='Checks if dependencies between packages are handled correctly.'
+    )
+    parser.add_argument(
+        "-f", "--provider-dependencies-file", help="Stores dependencies between providers in the file(.json)"
+    )
+    parser.add_argument(
+        "-d", "--documentation-file", help="Updates package documentation in the file specified (.rst)"
+    )
     parser.add_argument('files', nargs='*')
     args = parser.parse_args()
 
@@ -206,7 +210,7 @@ FOOTER = """========================== ===========================
 """
 
 
-def insert_documentation(deps_dict: Dict[str, List[str]], res: List[str]):
+def insert_documentation(deps_dict: Dict[str, List[str]], res: List[str]) -> None:
     res += HEADER.splitlines(keepends=True)
     for package, deps in deps_dict.items():
         deps_str = ",".join(deps)
@@ -239,7 +243,7 @@ if __name__ == '__main__':
         print(f"Total: {len(errors)} errors.")
     unique_sorted_dependencies: Dict[str, List[str]] = {}
     for key in sorted(dependencies.keys()):
-        unique_sorted_dependencies[key] = sorted(list(set(dependencies[key])))
+        unique_sorted_dependencies[key] = sorted(set(dependencies[key]))
     if provider_dependencies_file_name:
         with open(provider_dependencies_file_name, "w") as providers_file:
             json.dump(unique_sorted_dependencies, providers_file, indent=2)
@@ -248,7 +252,7 @@ if __name__ == '__main__':
         print(f"Written provider dependencies to the file {provider_dependencies_file_name}")
         print()
     if documentation_file_name:
-        with io.open(documentation_file_name, "r", encoding="utf-8") as documentation_file:
+        with open(documentation_file_name, encoding="utf-8") as documentation_file:
             text = documentation_file.readlines()
         replacing = False
         result: List[str] = []
@@ -261,7 +265,7 @@ if __name__ == '__main__':
                 replacing = False
             if not replacing:
                 result.append(line)
-        with io.open(documentation_file_name, "w", encoding="utf-8") as documentation_file:
+        with open(documentation_file_name, "w", encoding="utf-8") as documentation_file:
             documentation_file.write("".join(result))
         print()
         print(f"Written package extras to the file {documentation_file_name}")

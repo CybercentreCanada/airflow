@@ -21,13 +21,12 @@ from logging.config import fileConfig
 from alembic import context
 
 from airflow import models, settings
-from airflow.models.serialized_dag import SerializedDagModel  # pylint: disable=unused-import # noqa
 
 
 def include_object(_, name, type_, *args):
     """Filter objects for autogenerating revisions"""
-    # Ignore _anything_ to do with Flask AppBuilder's tables
-    if type_ == "table" and name.startswith("ab_"):
+    # Ignore _anything_ to do with Celery, or FlaskSession's tables
+    if type_ == "table" and (name.startswith("celery_") or name == "session"):
         return False
     else:
         return True
@@ -72,7 +71,8 @@ def run_migrations_offline():
         target_metadata=target_metadata,
         literal_binds=True,
         compare_type=COMPARE_TYPE,
-        render_as_batch=True)
+        render_as_batch=True,
+    )
 
     with context.begin_transaction():
         context.run_migrations()
@@ -94,7 +94,7 @@ def run_migrations_online():
             target_metadata=target_metadata,
             compare_type=COMPARE_TYPE,
             include_object=include_object,
-            render_as_batch=True
+            render_as_batch=True,
         )
 
         with context.begin_transaction():

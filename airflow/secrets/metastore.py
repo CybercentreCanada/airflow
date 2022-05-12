@@ -15,11 +15,9 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""
-Objects relating to sourcing connections from metastore database
-"""
-
-from typing import TYPE_CHECKING, List
+"""Objects relating to sourcing connections from metastore database"""
+import warnings
+from typing import TYPE_CHECKING, List, Optional
 
 from airflow.secrets import BaseSecretsBackend
 from airflow.utils.session import provide_session
@@ -29,17 +27,28 @@ if TYPE_CHECKING:
 
 
 class MetastoreBackend(BaseSecretsBackend):
-    """
-    Retrieves Connection object from airflow metastore database.
-    """
+    """Retrieves Connection object and Variable from airflow metastore database."""
 
-    # pylint: disable=missing-docstring
+    @provide_session
+    def get_connection(self, conn_id, session=None) -> Optional['Connection']:
+        from airflow.models.connection import Connection
+
+        conn = session.query(Connection).filter(Connection.conn_id == conn_id).first()
+        session.expunge_all()
+        return conn
+
     @provide_session
     def get_connections(self, conn_id, session=None) -> List['Connection']:
-        from airflow.models.connection import Connection
-        conn_list = session.query(Connection).filter(Connection.conn_id == conn_id).all()
-        session.expunge_all()
-        return conn_list
+        warnings.warn(
+            "This method is deprecated. Please use "
+            "`airflow.secrets.metastore.MetastoreBackend.get_connection`.",
+            PendingDeprecationWarning,
+            stacklevel=3,
+        )
+        conn = self.get_connection(conn_id=conn_id, session=session)
+        if conn:
+            return [conn]
+        return []
 
     @provide_session
     def get_variable(self, key: str, session=None):
@@ -50,6 +59,7 @@ class MetastoreBackend(BaseSecretsBackend):
         :return: Variable Value
         """
         from airflow.models.variable import Variable
+
         var_value = session.query(Variable).filter(Variable.key == key).first()
         session.expunge_all()
         if var_value:

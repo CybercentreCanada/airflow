@@ -15,17 +15,17 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Sanitizer for body fields sent via GCP API.
+"""Sanitizer for body fields sent via Google Cloud API.
 
 The sanitizer removes fields specified from the body.
 
 Context
 -------
-In some cases where GCP operation requires modification of existing resources (such
+In some cases where Google Cloud operation requires modification of existing resources (such
 as instances or instance templates) we need to sanitize body of the resources returned
-via GCP APIs. This is in the case when we retrieve information from GCP first,
+via Google Cloud APIs. This is in the case when we retrieve information from Google Cloud first,
 modify the body and either update the existing resource or create a new one with the
-modified body. Usually when you retrieve resource from GCP you get some extra fields which
+modified body. Usually when you retrieve resource from Google Cloud you get some extra fields which
 are Output-only, and we need to delete those fields if we want to use
 the body as input for subsequent create/insert type operation.
 
@@ -113,16 +113,16 @@ class GcpBodyFieldSanitizer(LoggingMixin):
     """Sanitizes the body according to specification.
 
     :param sanitize_specs: array of strings that specifies which fields to remove
-    :type sanitize_specs: list[str]
 
     """
+
     def __init__(self, sanitize_specs: List[str]) -> None:
         super().__init__()
         self._sanitize_specs = sanitize_specs
 
     def _sanitize(self, dictionary, remaining_field_spec, current_path):
         field_split = remaining_field_spec.split(".", 1)
-        if len(field_split) == 1:  # pylint: disable=too-many-nested-blocks
+        if len(field_split) == 1:
             field_name = field_split[0]
             if field_name in dictionary:
                 self.log.info("Deleted %s [%s]", field_name, current_path)
@@ -140,26 +140,26 @@ class GcpBodyFieldSanitizer(LoggingMixin):
                     "The field %s is missing in %s at the path %s. ", field_name, dictionary, current_path
                 )
             elif isinstance(child, dict):
-                self._sanitize(child, remaining_path, "{}.{}".format(
-                    current_path, field_name))
+                self._sanitize(child, remaining_path, f"{current_path}.{field_name}")
             elif isinstance(child, list):
                 for index, elem in enumerate(child):
                     if not isinstance(elem, dict):
                         self.log.warning(
                             "The field %s element at index %s is of wrong type. "
                             "It should be dict and is %s. Skipping it.",
-                            current_path, index, elem)
-                    self._sanitize(elem, remaining_path, "{}.{}[{}]".format(
-                        current_path, field_name, index))
+                            current_path,
+                            index,
+                            elem,
+                        )
+                    self._sanitize(elem, remaining_path, f"{current_path}.{field_name}[{index}]")
             else:
                 self.log.warning(
                     "The field %s is of wrong type. It should be dict or list and it is %s. Skipping it.",
-                    current_path, child
+                    current_path,
+                    child,
                 )
 
-    def sanitize(self, body):
-        """
-        Sanitizes the body according to specification.
-        """
+    def sanitize(self, body) -> None:
+        """Sanitizes the body according to specification."""
         for elem in self._sanitize_specs:
             self._sanitize(body, elem, "")

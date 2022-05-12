@@ -14,46 +14,68 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""
-DAG Cycle tester
-"""
-from collections import defaultdict
-from typing import Dict
+"""DAG Cycle tester"""
+from collections import defaultdict, deque
+from typing import TYPE_CHECKING, Deque, Dict
 
 from airflow.exceptions import AirflowDagCycleException
+
+if TYPE_CHECKING:
+    from airflow.models.dag import DAG
 
 CYCLE_NEW = 0
 CYCLE_IN_PROGRESS = 1
 CYCLE_DONE = 2
 
 
-def test_cycle(dag):
+def test_cycle(dag: 'DAG') -> None:
     """
-    Check to see if there are any cycles in the DAG. Returns False if no cycle found,
-    otherwise raises exception.
+    A wrapper function of `check_cycle` for backward compatibility purpose.
+    New code should use `check_cycle` instead since this function name `test_cycle` starts with 'test_' and
+    will be considered as a unit test by pytest, resulting in failure.
     """
-    def _test_cycle_helper(visit_map: Dict[str, int], task_id: str) -> None:
-        """
-        Checks if a cycle exists from the input task using DFS traversal
-        """
-        if visit_map[task_id] == CYCLE_DONE:
-            return
+    from warnings import warn
 
-        visit_map[task_id] = CYCLE_IN_PROGRESS
+    warn(
+        "Deprecated, please use `check_cycle` at the same module instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return check_cycle(dag)
 
-        task = dag.task_dict[task_id]
-        for descendant_id in task.get_direct_relative_ids():
-            if visit_map[descendant_id] == CYCLE_IN_PROGRESS:
-                msg = "Cycle detected in DAG. Faulty task: {0} to {1}".format(task_id, descendant_id)
-                raise AirflowDagCycleException(msg)
-            else:
-                _test_cycle_helper(visit_map, descendant_id)
 
-        visit_map[task_id] = CYCLE_DONE
+def check_cycle(dag: 'DAG') -> None:
+    """Check to see if there are any cycles in the DAG.
 
+    :raises AirflowDagCycleException: If cycle is found in the DAG.
+    """
     # default of int is 0 which corresponds to CYCLE_NEW
-    dag_visit_map: Dict[str, int] = defaultdict(int)
+    visited: Dict[str, int] = defaultdict(int)
+    path_stack: Deque[str] = deque()
+    task_dict = dag.task_dict
+
+    def _check_adjacent_tasks(task_id, current_task):
+        """Returns first untraversed child task, else None if all tasks traversed."""
+        for adjacent_task in current_task.get_direct_relative_ids():
+            if visited[adjacent_task] == CYCLE_IN_PROGRESS:
+                msg = f"Cycle detected in DAG. Faulty task: {task_id}"
+                raise AirflowDagCycleException(msg)
+            elif visited[adjacent_task] == CYCLE_NEW:
+                return adjacent_task
+        return None
+
     for dag_task_id in dag.task_dict.keys():
-        if dag_visit_map[dag_task_id] == CYCLE_NEW:
-            _test_cycle_helper(dag_visit_map, dag_task_id)
-    return False
+        if visited[dag_task_id] == CYCLE_DONE:
+            continue
+        path_stack.append(dag_task_id)
+        while path_stack:
+            current_task_id = path_stack[-1]
+            if visited[current_task_id] == CYCLE_NEW:
+                visited[current_task_id] = CYCLE_IN_PROGRESS
+            task = task_dict[current_task_id]
+            child_to_check = _check_adjacent_tasks(current_task_id, task)
+            if not child_to_check:
+                visited[current_task_id] = CYCLE_DONE
+                path_stack.pop()
+            else:
+                path_stack.append(child_to_check)

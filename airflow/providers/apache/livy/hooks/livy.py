@@ -15,9 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-This module contains the Apache Livy hook.
-"""
+"""This module contains the Apache Livy hook."""
 import json
 import re
 from enum import Enum
@@ -31,9 +29,8 @@ from airflow.utils.log.logging_mixin import LoggingMixin
 
 
 class BatchState(Enum):
-    """
-    Batch session states
-    """
+    """Batch session states"""
+
     NOT_STARTED = 'not_started'
     STARTING = 'starting'
     RUNNING = 'running'
@@ -51,7 +48,8 @@ class LivyHook(HttpHook, LoggingMixin):
     Hook for Apache Livy through the REST API.
 
     :param livy_conn_id: reference to a pre-defined Livy Connection.
-    :type livy_conn_id: str
+    :param extra_options: A dictionary of options passed to Livy.
+    :param extra_headers: A dictionary of headers passed to the HTTP request to livy.
 
     .. seealso::
         For more details refer to the Apache Livy API reference:
@@ -65,20 +63,28 @@ class LivyHook(HttpHook, LoggingMixin):
         BatchState.ERROR,
     }
 
-    _def_headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-    }
+    _def_headers = {'Content-Type': 'application/json', 'Accept': 'application/json'}
 
-    def __init__(self, livy_conn_id: str = 'livy_default') -> None:
-        super(LivyHook, self).__init__(http_conn_id=livy_conn_id)
+    conn_name_attr = 'livy_conn_id'
+    default_conn_name = 'livy_default'
+    conn_type = 'livy'
+    hook_name = 'Apache Livy'
+
+    def __init__(
+        self,
+        livy_conn_id: str = default_conn_name,
+        extra_options: Optional[Dict[str, Any]] = None,
+        extra_headers: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        super().__init__(http_conn_id=livy_conn_id)
+        self.extra_headers = extra_headers or {}
+        self.extra_options = extra_options or {}
 
     def get_conn(self, headers: Optional[Dict[str, Any]] = None) -> Any:
         """
         Returns http session for use with requests
 
         :param headers: additional headers to be passed through as a dictionary
-        :type headers: dict
         :return: requests session
         :rtype: requests.Session
         """
@@ -93,33 +99,39 @@ class LivyHook(HttpHook, LoggingMixin):
         method: str = 'GET',
         data: Optional[Any] = None,
         headers: Optional[Dict[str, Any]] = None,
-        extra_options: Optional[Dict[Any, Any]] = None
+        retry_args: Optional[Dict[str, Any]] = None,
     ) -> Any:
         """
         Wrapper for HttpHook, allows to change method on the same HttpHook
 
         :param method: http method
-        :type method: str
         :param endpoint: endpoint
-        :type endpoint: str
         :param data: request payload
-        :type data: dict
         :param headers: headers
-        :type headers: dict
-        :param extra_options: extra options
-        :type extra_options: dict
+        :param retry_args: Arguments which define the retry behaviour.
+            See Tenacity documentation at https://github.com/jd/tenacity
         :return: http response
         :rtype: requests.Response
         """
         if method not in ('GET', 'POST', 'PUT', 'DELETE', 'HEAD'):
-            raise ValueError("Invalid http method '{}'".format(method))
-        if extra_options is None:
-            extra_options = {'check_response': False}
+            raise ValueError(f"Invalid http method '{method}'")
+        if not self.extra_options:
+            self.extra_options = {'check_response': False}
 
         back_method = self.method
         self.method = method
         try:
-            result = self.run(endpoint, data, headers, extra_options)
+            if retry_args:
+                result = self.run_with_advanced_retry(
+                    endpoint=endpoint,
+                    data=data,
+                    headers=headers,
+                    extra_options=self.extra_options,
+                    _retry_args=retry_args,
+                )
+            else:
+                result = self.run(endpoint, data, headers, self.extra_options)
+
         finally:
             self.method = back_method
         return result
@@ -139,19 +151,17 @@ class LivyHook(HttpHook, LoggingMixin):
         self.log.info("Submitting job %s to %s", batch_submit_body, self.base_url)
 
         response = self.run_method(
-            method='POST',
-            endpoint='/batches',
-            data=batch_submit_body
+            method='POST', endpoint='/batches', data=batch_submit_body, headers=self.extra_headers
         )
         self.log.debug("Got response: %s", response.text)
 
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as err:
-            raise AirflowException("Could not submit batch. Status code: {}. Message: '{}'".format(
-                err.response.status_code,
-                err.response.text
-            ))
+            raise AirflowException(
+                "Could not submit batch. "
+                f"Status code: {err.response.status_code}. Message: '{err.response.text}'"
+            )
 
         batch_id = self._parse_post_response(response.json())
         if batch_id is None:
@@ -165,52 +175,54 @@ class LivyHook(HttpHook, LoggingMixin):
         Fetch info about the specified batch
 
         :param session_id: identifier of the batch sessions
-        :type session_id: int
         :return: response body
         :rtype: dict
         """
         self._validate_session_id(session_id)
 
         self.log.debug("Fetching info for batch session %d", session_id)
-        response = self.run_method(endpoint='/batches/{}'.format(session_id))
+        response = self.run_method(endpoint=f'/batches/{session_id}', headers=self.extra_headers)
 
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as err:
             self.log.warning("Got status code %d for session %d", err.response.status_code, session_id)
-            raise AirflowException("Unable to fetch batch with id: {}. Message: {}".format(
-                session_id,
-                err.response.text
-            ))
+            raise AirflowException(
+                f"Unable to fetch batch with id: {session_id}. Message: {err.response.text}"
+            )
 
         return response.json()
 
-    def get_batch_state(self, session_id: Union[int, str]) -> BatchState:
+    def get_batch_state(
+        self, session_id: Union[int, str], retry_args: Optional[Dict[str, Any]] = None
+    ) -> BatchState:
         """
         Fetch the state of the specified batch
 
         :param session_id: identifier of the batch sessions
-        :type session_id: Union[int, str]
+        :param retry_args: Arguments which define the retry behaviour.
+            See Tenacity documentation at https://github.com/jd/tenacity
         :return: batch state
         :rtype: BatchState
         """
         self._validate_session_id(session_id)
 
         self.log.debug("Fetching info for batch session %d", session_id)
-        response = self.run_method(endpoint='/batches/{}/state'.format(session_id))
+        response = self.run_method(
+            endpoint=f'/batches/{session_id}/state', retry_args=retry_args, headers=self.extra_headers
+        )
 
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as err:
             self.log.warning("Got status code %d for session %d", err.response.status_code, session_id)
-            raise AirflowException("Unable to fetch batch with id: {}. Message: {}".format(
-                session_id,
-                err.response.text
-            ))
+            raise AirflowException(
+                f"Unable to fetch batch with id: {session_id}. Message: {err.response.text}"
+            )
 
         jresp = response.json()
         if 'state' not in jresp:
-            raise AirflowException("Unable to get state for batch with id: {}".format(session_id))
+            raise AirflowException(f"Unable to get state for batch with id: {session_id}")
         return BatchState(jresp['state'])
 
     def delete_batch(self, session_id: Union[int, str]) -> Any:
@@ -218,7 +230,6 @@ class LivyHook(HttpHook, LoggingMixin):
         Delete the specified batch
 
         :param session_id: identifier of the batch sessions
-        :type session_id: int
         :return: response body
         :rtype: dict
         """
@@ -226,20 +237,65 @@ class LivyHook(HttpHook, LoggingMixin):
 
         self.log.info("Deleting batch session %d", session_id)
         response = self.run_method(
-            method='DELETE',
-            endpoint='/batches/{}'.format(session_id)
+            method='DELETE', endpoint=f'/batches/{session_id}', headers=self.extra_headers
         )
 
         try:
             response.raise_for_status()
         except requests.exceptions.HTTPError as err:
             self.log.warning("Got status code %d for session %d", err.response.status_code, session_id)
-            raise AirflowException("Could not kill the batch with session id: {}. Message: {}".format(
-                session_id,
-                err.response.text
-            ))
+            raise AirflowException(
+                f"Could not kill the batch with session id: {session_id}. Message: {err.response.text}"
+            )
 
         return response.json()
+
+    def get_batch_logs(self, session_id: Union[int, str], log_start_position, log_batch_size) -> Any:
+        """
+        Gets the session logs for a specified batch.
+        :param session_id: identifier of the batch sessions
+        :param log_start_position: Position from where to pull the logs
+        :param log_batch_size: Number of lines to pull in one batch
+
+        :return: response body
+        :rtype: dict
+        """
+        self._validate_session_id(session_id)
+        log_params = {'from': log_start_position, 'size': log_batch_size}
+        response = self.run_method(
+            endpoint=f'/batches/{session_id}/log', data=log_params, headers=self.extra_headers
+        )
+        try:
+            response.raise_for_status()
+        except requests.exceptions.HTTPError as err:
+            self.log.warning("Got status code %d for session %d", err.response.status_code, session_id)
+            raise AirflowException(
+                f"Could not fetch the logs for batch with session id: {session_id}. "
+                f"Message: {err.response.text}"
+            )
+        return response.json()
+
+    def dump_batch_logs(self, session_id: Union[int, str]) -> Any:
+        """
+        Dumps the session logs for a specified batch
+
+        :param session_id: identifier of the batch sessions
+        :return: response body
+        :rtype: dict
+        """
+        self.log.info("Fetching the logs for batch session with id: %d", session_id)
+        log_start_line = 0
+        log_total_lines = 0
+        log_batch_size = 100
+
+        while log_start_line <= log_total_lines:
+            # Livy log  endpoint is paginated.
+            response = self.get_batch_logs(session_id, log_start_line, log_batch_size)
+            log_total_lines = self._parse_request_response(response, 'total')
+            log_start_line += log_batch_size
+            log_lines = self._parse_request_response(response, 'log')
+            for log_line in log_lines:
+                self.log.info(log_line)
 
     @staticmethod
     def _validate_session_id(session_id: Union[int, str]) -> None:
@@ -247,7 +303,6 @@ class LivyHook(HttpHook, LoggingMixin):
         Validate session id is a int
 
         :param session_id: session id
-        :type session_id: Union[int, str]
         """
         try:
             int(session_id)
@@ -260,11 +315,21 @@ class LivyHook(HttpHook, LoggingMixin):
         Parse batch response for batch id
 
         :param response: response body
-        :type response: dict
         :return: session id
         :rtype: int
         """
         return response.get('id')
+
+    @staticmethod
+    def _parse_request_response(response: Dict[Any, Any], parameter) -> Any:
+        """
+        Parse batch response for batch id
+
+        :param response: response body
+        :return: value of parameter
+        :rtype: Union[int, list]
+        """
+        return response.get(parameter)
 
     @staticmethod
     def build_post_batch_body(
@@ -283,50 +348,31 @@ class LivyHook(HttpHook, LoggingMixin):
         num_executors: Optional[Union[int, str]] = None,
         queue: Optional[str] = None,
         proxy_user: Optional[str] = None,
-        conf: Optional[Dict[Any, Any]] = None
+        conf: Optional[Dict[Any, Any]] = None,
     ) -> Any:
         """
         Build the post batch request body.
         For more information about the format refer to
         .. seealso:: https://livy.apache.org/docs/latest/rest-api.html
-
         :param file: Path of the file containing the application to execute (required).
-        :type file: str
         :param proxy_user: User to impersonate when running the job.
-        :type proxy_user: str
         :param class_name: Application Java/Spark main class string.
-        :type class_name: str
         :param args: Command line arguments for the application s.
-        :type args: Sequence[Union[str, int, float]]
         :param jars: jars to be used in this sessions.
-        :type jars: Sequence[str]
         :param py_files: Python files to be used in this session.
-        :type py_files: Sequence[str]
         :param files: files to be used in this session.
-        :type files: Sequence[str]
         :param driver_memory: Amount of memory to use for the driver process  string.
-        :type driver_memory: str
         :param driver_cores: Number of cores to use for the driver process int.
-        :type driver_cores: Union[str, int]
         :param executor_memory: Amount of memory to use per executor process  string.
-        :type executor_memory: str
         :param executor_cores: Number of cores to use for each executor  int.
-        :type executor_cores: Union[int, str]
         :param num_executors: Number of executors to launch for this session  int.
-        :type num_executors: Union[str, int]
         :param archives: Archives to be used in this session.
-        :type archives: Sequence[str]
         :param queue: The name of the YARN queue to which submitted string.
-        :type queue: str
         :param name: The name of this session string.
-        :type name: str
         :param conf: Spark configuration properties.
-        :type conf: dict
         :return: request body
         :rtype: dict
         """
-        # pylint: disable-msg=too-many-arguments
-
         body: Dict[str, Any] = {'file': file}
 
         if proxy_user:
@@ -368,12 +414,11 @@ class LivyHook(HttpHook, LoggingMixin):
         Validate size format.
 
         :param size: size value
-        :type size: str
         :return: true if valid format
         :rtype: bool
         """
         if size and not (isinstance(size, str) and re.match(r'^\d+[kmgt]b?$', size, re.IGNORECASE)):
-            raise ValueError("Invalid java size format for string'{}'".format(size))
+            raise ValueError(f"Invalid java size format for string'{size}'")
         return True
 
     @staticmethod
@@ -382,13 +427,14 @@ class LivyHook(HttpHook, LoggingMixin):
         Check the values in the provided list can be converted to strings.
 
         :param vals: list to validate
-        :type vals: Sequence[Union[str, int, float]]
         :return: true if valid
         :rtype: bool
         """
-        if vals is None or \
-           not isinstance(vals, (tuple, list)) or \
-           any(1 for val in vals if not isinstance(val, (str, int, float))):
+        if (
+            vals is None
+            or not isinstance(vals, (tuple, list))
+            or any(1 for val in vals if not isinstance(val, (str, int, float)))
+        ):
             raise ValueError("List of strings expected")
         return True
 
@@ -398,7 +444,6 @@ class LivyHook(HttpHook, LoggingMixin):
         Check configuration values are either strings or ints.
 
         :param conf: configuration variable
-        :type conf: dict
         :return: true if valid
         :rtype: bool
         """

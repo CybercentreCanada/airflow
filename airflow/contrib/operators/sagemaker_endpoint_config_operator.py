@@ -22,7 +22,6 @@ Please use `airflow.providers.amazon.aws.operators.sagemaker_endpoint_config`.
 
 import warnings
 
-# pylint: disable=unused-import
 from airflow.providers.amazon.aws.operators.sagemaker_endpoint_config import (  # noqa
     SageMakerEndpointConfigOperator,
 )
@@ -30,5 +29,6 @@ from airflow.providers.amazon.aws.operators.sagemaker_endpoint_config import (  
 warnings.warn(
     "This module is deprecated. "
     "Please use `airflow.providers.amazon.aws.operators.sagemaker_endpoint_config`.",
-    DeprecationWarning, stacklevel=2
+    DeprecationWarning,
+    stacklevel=2,
 )

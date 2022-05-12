@@ -33,11 +33,14 @@ from airflow.exceptions import AirflowException
 from airflow.executors.base_executor import NOT_STARTED_MESSAGE, BaseExecutor, CommandType
 from airflow.models.taskinstance import TaskInstanceKey
 
+# queue="default" is a special case since this is the base config default queue name,
+# with respect to DaskExecutor, treat it as if no queue is provided
+_UNDEFINED_QUEUES = {None, 'default'}
+
 
 class DaskExecutor(BaseExecutor):
-    """
-    DaskExecutor submits tasks to a Dask Distributed cluster.
-    """
+    """DaskExecutor submits tasks to a Dask Distributed cluster."""
+
     def __init__(self, cluster_address=None):
         super().__init__(parallelism=0)
         if cluster_address is None:
@@ -66,14 +69,15 @@ class DaskExecutor(BaseExecutor):
         self.client = Client(self.cluster_address, security=security)
         self.futures = {}
 
-    def execute_async(self,
-                      key: TaskInstanceKey,
-                      command: CommandType,
-                      queue: Optional[str] = None,
-                      executor_config: Optional[Any] = None) -> None:
+    def execute_async(
+        self,
+        key: TaskInstanceKey,
+        command: CommandType,
+        queue: Optional[str] = None,
+        executor_config: Optional[Any] = None,
+    ) -> None:
 
-        if command[0:3] != ["airflow", "tasks", "run"]:
-            raise ValueError('The command must start with ["airflow", "tasks", "run"].')
+        self.validate_command(command)
 
         def airflow_run():
             return subprocess.check_call(command, close_fds=True)
@@ -81,7 +85,18 @@ class DaskExecutor(BaseExecutor):
         if not self.client:
             raise AirflowException(NOT_STARTED_MESSAGE)
 
-        future = self.client.submit(airflow_run, pure=False)
+        resources = None
+        if queue not in _UNDEFINED_QUEUES:
+            scheduler_info = self.client.scheduler_info()
+            avail_queues = {
+                resource for d in scheduler_info['workers'].values() for resource in d['resources']
+            }
+
+            if queue not in avail_queues:
+                raise AirflowException(f"Attempted to submit task to an unavailable queue: '{queue}'")
+            resources = {queue: 1}
+
+        future = self.client.submit(subprocess.check_call, command, pure=False, resources=resources)
         self.futures[future] = key  # type: ignore
 
     def _process_future(self, future: Future) -> None:
@@ -100,7 +115,7 @@ class DaskExecutor(BaseExecutor):
             self.futures.pop(future)
 
     def sync(self) -> None:
-        if not self.futures:
+        if self.futures is None:
             raise AirflowException(NOT_STARTED_MESSAGE)
         # make a copy so futures can be popped during iteration
         for future in self.futures.copy():
@@ -109,14 +124,14 @@ class DaskExecutor(BaseExecutor):
     def end(self) -> None:
         if not self.client:
             raise AirflowException(NOT_STARTED_MESSAGE)
-        if not self.futures:
+        if self.futures is None:
             raise AirflowException(NOT_STARTED_MESSAGE)
         self.client.cancel(list(self.futures.keys()))
         for future in as_completed(self.futures.copy()):
             self._process_future(future)
 
     def terminate(self):
-        if not self.futures:
+        if self.futures is None:
             raise AirflowException(NOT_STARTED_MESSAGE)
         self.client.cancel(self.futures.keys())
         self.end()

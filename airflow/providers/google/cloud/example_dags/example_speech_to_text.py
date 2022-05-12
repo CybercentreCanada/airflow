@@ -17,14 +17,14 @@
 # under the License.
 
 import os
+from datetime import datetime
 
 from airflow import models
 from airflow.providers.google.cloud.operators.speech_to_text import CloudSpeechToTextRecognizeSpeechOperator
 from airflow.providers.google.cloud.operators.text_to_speech import CloudTextToSpeechSynthesizeOperator
-from airflow.utils import dates
 
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "example-project")
-BUCKET_NAME = os.environ.get("GCP_SPEECH_TO_TEXT_TEST_BUCKET", "gcp-speech-to-text-test-bucket")
+BUCKET_NAME = os.environ.get("GCP_SPEECH_TO_TEXT_TEST_BUCKET", "INVALID BUCKET NAME")
 
 # [START howto_operator_speech_to_text_gcp_filename]
 FILENAME = "gcp-speech-test-file"
@@ -38,13 +38,14 @@ AUDIO_CONFIG = {"audio_encoding": "LINEAR16"}
 
 # [START howto_operator_speech_to_text_api_arguments]
 CONFIG = {"encoding": "LINEAR16", "language_code": "en_US"}
-AUDIO = {"uri": "gs://{bucket}/{object}".format(bucket=BUCKET_NAME, object=FILENAME)}
+AUDIO = {"uri": f"gs://{BUCKET_NAME}/{FILENAME}"}
 # [END howto_operator_speech_to_text_api_arguments]
 
 with models.DAG(
     "example_gcp_speech_to_text",
-    start_date=dates.days_ago(1),
-    schedule_interval=None,  # Override to match your needs
+    schedule_interval='@once',  # Override to match your needs
+    start_date=datetime(2021, 1, 1),
+    catchup=False,
     tags=['example'],
 ) as dag:
     text_to_speech_synthesize_task = CloudTextToSpeechSynthesizeOperator(
@@ -58,9 +59,7 @@ with models.DAG(
     )
     # [START howto_operator_speech_to_text_recognize]
     speech_to_text_recognize_task2 = CloudSpeechToTextRecognizeSpeechOperator(
-        config=CONFIG,
-        audio=AUDIO,
-        task_id="speech_to_text_recognize_task"
+        config=CONFIG, audio=AUDIO, task_id="speech_to_text_recognize_task"
     )
     # [END howto_operator_speech_to_text_recognize]
 

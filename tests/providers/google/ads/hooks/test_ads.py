@@ -15,7 +15,9 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import mock
+from unittest import mock
+from unittest.mock import PropertyMock
+
 import pytest
 
 from airflow.providers.google.ads.hooks.ads import GoogleAdsHook
@@ -31,7 +33,7 @@ EXTRAS = {
 
 @pytest.fixture()
 def mock_hook():
-    with mock.patch("airflow.hooks.base_hook.BaseHook.get_connection") as conn:
+    with mock.patch("airflow.hooks.base.BaseHook.get_connection") as conn:
         hook = GoogleAdsHook(api_version=API_VERSION)
         conn.return_value.extra_dejson = EXTRAS
         yield hook
@@ -43,34 +45,33 @@ class TestGoogleAdsHook:
         mock_hook._get_customer_service()
         client = mock_client.load_from_dict
         client.assert_called_once_with(mock_hook.google_ads_config)
-        client.return_value.get_service.assert_called_once_with(
-            "CustomerService", version=API_VERSION
-        )
+        client.return_value.get_service.assert_called_once_with("CustomerService", version=API_VERSION)
 
     @mock.patch("airflow.providers.google.ads.hooks.ads.GoogleAdsClient")
     def test_get_service(self, mock_client, mock_hook):
         mock_hook._get_service()
         client = mock_client.load_from_dict
         client.assert_called_once_with(mock_hook.google_ads_config)
-        client.return_value.get_service.assert_called_once_with(
-            "GoogleAdsService", version=API_VERSION
-        )
+        client.return_value.get_service.assert_called_once_with("GoogleAdsService", version=API_VERSION)
 
     @mock.patch("airflow.providers.google.ads.hooks.ads.GoogleAdsClient")
     def test_search(self, mock_client, mock_hook):
         service = mock_client.load_from_dict.return_value.get_service.return_value
+        mock_client.load_from_dict.return_value.get_type.side_effect = [PropertyMock(), PropertyMock()]
+        client_ids = ["1", "2"]
         rows = ["row1", "row2"]
         service.search.side_effects = rows
 
         # Here we mock _extract_rows to assert calls and
         # avoid additional __iter__ calls
         mock_hook._extract_rows = list
-
         query = "QUERY"
-        client_ids = ["1", "2"]
-        mock_hook.search(client_ids=client_ids, query="QUERY", page_size=2)
-        expected_calls = [mock.call(c, query=query, page_size=2) for c in client_ids]
-        service.search.assert_has_calls(expected_calls)
+        mock_hook.search(client_ids=client_ids, query=query, page_size=2)
+        for i, client_id in enumerate(client_ids):
+            name, args, kwargs = service.search.mock_calls[i]
+            assert kwargs['request'].customer_id == client_id
+            assert kwargs['request'].query == query
+            assert kwargs['request'].page_size == 2
 
     def test_extract_rows(self, mock_hook):
         iterators = [[1, 2, 3], [4, 5, 6]]

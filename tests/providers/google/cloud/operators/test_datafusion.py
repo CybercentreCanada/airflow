@@ -15,15 +15,21 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import mock
+from unittest import mock
 
 from airflow import DAG
+from airflow.providers.google.cloud.hooks.datafusion import SUCCESS_STATES, PipelineStates
 from airflow.providers.google.cloud.operators.datafusion import (
-    CloudDataFusionCreateInstanceOperator, CloudDataFusionCreatePipelineOperator,
-    CloudDataFusionDeleteInstanceOperator, CloudDataFusionDeletePipelineOperator,
-    CloudDataFusionGetInstanceOperator, CloudDataFusionListPipelinesOperator,
-    CloudDataFusionRestartInstanceOperator, CloudDataFusionStartPipelineOperator,
-    CloudDataFusionStopPipelineOperator, CloudDataFusionUpdateInstanceOperator,
+    CloudDataFusionCreateInstanceOperator,
+    CloudDataFusionCreatePipelineOperator,
+    CloudDataFusionDeleteInstanceOperator,
+    CloudDataFusionDeletePipelineOperator,
+    CloudDataFusionGetInstanceOperator,
+    CloudDataFusionListPipelinesOperator,
+    CloudDataFusionRestartInstanceOperator,
+    CloudDataFusionStartPipelineOperator,
+    CloudDataFusionStopPipelineOperator,
+    CloudDataFusionUpdateInstanceOperator,
 )
 
 HOOK_STR = "airflow.providers.google.cloud.operators.datafusion.DataFusionHook"
@@ -44,14 +50,14 @@ class TestCloudDataFusionUpdateInstanceOperator:
     def test_execute(self, mock_hook):
         update_maks = "instance.name"
         op = CloudDataFusionUpdateInstanceOperator(
-            task_id="test_taks",
+            task_id="test_tasks",
             instance_name=INSTANCE_NAME,
             instance=INSTANCE,
             update_mask=update_maks,
             location=LOCATION,
             project_id=PROJECT_ID,
         )
-        op.execute({})
+        op.execute(context=mock.MagicMock())
 
         mock_hook.return_value.patch_instance.assert_called_once_with(
             instance_name=INSTANCE_NAME,
@@ -67,12 +73,12 @@ class TestCloudDataFusionRestartInstanceOperator:
     @mock.patch(HOOK_STR)
     def test_execute(self, mock_hook):
         op = CloudDataFusionRestartInstanceOperator(
-            task_id="test_taks",
+            task_id="test_tasks",
             instance_name=INSTANCE_NAME,
             location=LOCATION,
             project_id=PROJECT_ID,
         )
-        op.execute({})
+        op.execute(context=mock.MagicMock())
 
         mock_hook.return_value.restart_instance.assert_called_once_with(
             instance_name=INSTANCE_NAME, location=LOCATION, project_id=PROJECT_ID
@@ -84,13 +90,13 @@ class TestCloudDataFusionCreateInstanceOperator:
     @mock.patch(HOOK_STR)
     def test_execute(self, mock_hook):
         op = CloudDataFusionCreateInstanceOperator(
-            task_id="test_taks",
+            task_id="test_tasks",
             instance_name=INSTANCE_NAME,
             instance=INSTANCE,
             location=LOCATION,
             project_id=PROJECT_ID,
         )
-        op.execute({})
+        op.execute(context=mock.MagicMock())
 
         mock_hook.return_value.create_instance.assert_called_once_with(
             instance_name=INSTANCE_NAME,
@@ -105,12 +111,12 @@ class TestCloudDataFusionDeleteInstanceOperator:
     @mock.patch(HOOK_STR)
     def test_execute(self, mock_hook):
         op = CloudDataFusionDeleteInstanceOperator(
-            task_id="test_taks",
+            task_id="test_tasks",
             instance_name=INSTANCE_NAME,
             location=LOCATION,
             project_id=PROJECT_ID,
         )
-        op.execute({})
+        op.execute(context=mock.MagicMock())
 
         mock_hook.return_value.delete_instance.assert_called_once_with(
             instance_name=INSTANCE_NAME, location=LOCATION, project_id=PROJECT_ID
@@ -122,12 +128,12 @@ class TestCloudDataFusionGetInstanceOperator:
     @mock.patch(HOOK_STR)
     def test_execute(self, mock_hook):
         op = CloudDataFusionGetInstanceOperator(
-            task_id="test_taks",
+            task_id="test_tasks",
             instance_name=INSTANCE_NAME,
             location=LOCATION,
             project_id=PROJECT_ID,
         )
-        op.execute({})
+        op.execute(context=mock.MagicMock())
 
         mock_hook.return_value.get_instance.assert_called_once_with(
             instance_name=INSTANCE_NAME, location=LOCATION, project_id=PROJECT_ID
@@ -137,9 +143,12 @@ class TestCloudDataFusionGetInstanceOperator:
 class TestCloudDataFusionCreatePipelineOperator:
     @mock.patch(HOOK_STR)
     def test_execute(self, mock_hook):
-        mock_hook.return_value.get_instance.return_value = {"apiEndpoint": INSTANCE_URL}
+        mock_hook.return_value.get_instance.return_value = {
+            "apiEndpoint": INSTANCE_URL,
+            "serviceEndpoint": INSTANCE_URL,
+        }
         op = CloudDataFusionCreatePipelineOperator(
-            task_id="test_taks",
+            task_id="test_tasks",
             pipeline_name=PIPELINE_NAME,
             pipeline=PIPELINE,
             instance_name=INSTANCE_NAME,
@@ -147,7 +156,7 @@ class TestCloudDataFusionCreatePipelineOperator:
             location=LOCATION,
             project_id=PROJECT_ID,
         )
-        op.execute({})
+        op.execute(context=mock.MagicMock())
         mock_hook.return_value.get_instance.assert_called_once_with(
             instance_name=INSTANCE_NAME, location=LOCATION, project_id=PROJECT_ID
         )
@@ -163,9 +172,12 @@ class TestCloudDataFusionCreatePipelineOperator:
 class TestCloudDataFusionDeletePipelineOperator:
     @mock.patch(HOOK_STR)
     def test_execute(self, mock_hook):
-        mock_hook.return_value.get_instance.return_value = {"apiEndpoint": INSTANCE_URL}
+        mock_hook.return_value.get_instance.return_value = {
+            "apiEndpoint": INSTANCE_URL,
+            "serviceEndpoint": INSTANCE_URL,
+        }
         op = CloudDataFusionDeletePipelineOperator(
-            task_id="test_taks",
+            task_id="test_tasks",
             pipeline_name=PIPELINE_NAME,
             version_id="1.12",
             instance_name=INSTANCE_NAME,
@@ -173,7 +185,7 @@ class TestCloudDataFusionDeletePipelineOperator:
             location=LOCATION,
             project_id=PROJECT_ID,
         )
-        op.execute({})
+        op.execute(context=mock.MagicMock())
         mock_hook.return_value.get_instance.assert_called_once_with(
             instance_name=INSTANCE_NAME, location=LOCATION, project_id=PROJECT_ID
         )
@@ -189,7 +201,12 @@ class TestCloudDataFusionDeletePipelineOperator:
 class TestCloudDataFusionStartPipelineOperator:
     @mock.patch(HOOK_STR)
     def test_execute(self, mock_hook):
-        mock_hook.return_value.get_instance.return_value = {"apiEndpoint": INSTANCE_URL}
+        PIPELINE_ID = "test_pipeline_id"
+        mock_hook.return_value.get_instance.return_value = {
+            "apiEndpoint": INSTANCE_URL,
+            "serviceEndpoint": INSTANCE_URL,
+        }
+        mock_hook.return_value.start_pipeline.return_value = PIPELINE_ID
 
         op = CloudDataFusionStartPipelineOperator(
             task_id="test_task",
@@ -198,11 +215,11 @@ class TestCloudDataFusionStartPipelineOperator:
             namespace=NAMESPACE,
             location=LOCATION,
             project_id=PROJECT_ID,
-            runtime_args=RUNTIME_ARGS
+            runtime_args=RUNTIME_ARGS,
         )
         op.dag = mock.MagicMock(spec=DAG, task_dict={}, dag_id="test")
 
-        op.execute({})
+        op.execute(context=mock.MagicMock())
         mock_hook.return_value.get_instance.assert_called_once_with(
             instance_name=INSTANCE_NAME, location=LOCATION, project_id=PROJECT_ID
         )
@@ -214,20 +231,67 @@ class TestCloudDataFusionStartPipelineOperator:
             runtime_args=RUNTIME_ARGS,
         )
 
+        mock_hook.return_value.wait_for_pipeline_state.assert_called_once_with(
+            success_states=SUCCESS_STATES + [PipelineStates.RUNNING],
+            pipeline_id=PIPELINE_ID,
+            pipeline_name=PIPELINE_NAME,
+            namespace=NAMESPACE,
+            instance_url=INSTANCE_URL,
+            timeout=300,
+        )
+
+    @mock.patch(HOOK_STR)
+    def test_execute_async(self, mock_hook):
+        PIPELINE_ID = "test_pipeline_id"
+        mock_hook.return_value.get_instance.return_value = {
+            "apiEndpoint": INSTANCE_URL,
+            "serviceEndpoint": INSTANCE_URL,
+        }
+        mock_hook.return_value.start_pipeline.return_value = PIPELINE_ID
+
+        op = CloudDataFusionStartPipelineOperator(
+            task_id="test_task",
+            pipeline_name=PIPELINE_NAME,
+            instance_name=INSTANCE_NAME,
+            namespace=NAMESPACE,
+            location=LOCATION,
+            project_id=PROJECT_ID,
+            runtime_args=RUNTIME_ARGS,
+            asynchronous=True,
+        )
+        op.dag = mock.MagicMock(spec=DAG, task_dict={}, dag_id="test")
+
+        op.execute(context=mock.MagicMock())
+        mock_hook.return_value.get_instance.assert_called_once_with(
+            instance_name=INSTANCE_NAME, location=LOCATION, project_id=PROJECT_ID
+        )
+
+        mock_hook.return_value.start_pipeline.assert_called_once_with(
+            instance_url=INSTANCE_URL,
+            pipeline_name=PIPELINE_NAME,
+            namespace=NAMESPACE,
+            runtime_args=RUNTIME_ARGS,
+        )
+
+        mock_hook.return_value.wait_for_pipeline_state.assert_not_called()
+
 
 class TestCloudDataFusionStopPipelineOperator:
     @mock.patch(HOOK_STR)
     def test_execute(self, mock_hook):
-        mock_hook.return_value.get_instance.return_value = {"apiEndpoint": INSTANCE_URL}
+        mock_hook.return_value.get_instance.return_value = {
+            "apiEndpoint": INSTANCE_URL,
+            "serviceEndpoint": INSTANCE_URL,
+        }
         op = CloudDataFusionStopPipelineOperator(
-            task_id="test_taks",
+            task_id="test_tasks",
             pipeline_name=PIPELINE_NAME,
             instance_name=INSTANCE_NAME,
             namespace=NAMESPACE,
             location=LOCATION,
             project_id=PROJECT_ID,
         )
-        op.execute({})
+        op.execute(context=mock.MagicMock())
         mock_hook.return_value.get_instance.assert_called_once_with(
             instance_name=INSTANCE_NAME, location=LOCATION, project_id=PROJECT_ID
         )
@@ -242,9 +306,12 @@ class TestCloudDataFusionListPipelinesOperator:
     def test_execute(self, mock_hook):
         artifact_version = "artifact_version"
         artifact_name = "artifact_name"
-        mock_hook.return_value.get_instance.return_value = {"apiEndpoint": INSTANCE_URL}
+        mock_hook.return_value.get_instance.return_value = {
+            "apiEndpoint": INSTANCE_URL,
+            "serviceEndpoint": INSTANCE_URL,
+        }
         op = CloudDataFusionListPipelinesOperator(
-            task_id="test_taks",
+            task_id="test_tasks",
             instance_name=INSTANCE_NAME,
             artifact_version=artifact_version,
             artifact_name=artifact_name,
@@ -252,7 +319,7 @@ class TestCloudDataFusionListPipelinesOperator:
             location=LOCATION,
             project_id=PROJECT_ID,
         )
-        op.execute({})
+        op.execute(context=mock.MagicMock())
         mock_hook.return_value.get_instance.assert_called_once_with(
             instance_name=INSTANCE_NAME, location=LOCATION, project_id=PROJECT_ID
         )

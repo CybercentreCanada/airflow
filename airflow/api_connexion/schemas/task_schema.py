@@ -20,10 +20,13 @@ from typing import List, NamedTuple
 from marshmallow import Schema, fields
 
 from airflow.api_connexion.schemas.common_schema import (
-    ClassReferenceSchema, ColorField, TimeDeltaSchema, WeightRuleField,
+    ClassReferenceSchema,
+    ColorField,
+    TimeDeltaSchema,
+    WeightRuleField,
 )
 from airflow.api_connexion.schemas.dag_schema import DAGSchema
-from airflow.models.baseoperator import BaseOperator
+from airflow.models.operator import Operator
 
 
 class TaskSchema(Schema):
@@ -36,9 +39,7 @@ class TaskSchema(Schema):
     end_date = fields.DateTime(dump_only=True)
     trigger_rule = fields.String(dump_only=True)
     extra_links = fields.List(
-        fields.Nested(ClassReferenceSchema),
-        dump_only=True,
-        attribute="operator_extra_links"
+        fields.Nested(ClassReferenceSchema), dump_only=True, attribute="operator_extra_links"
     )
     depends_on_past = fields.Boolean(dump_only=True)
     wait_for_downstream = fields.Boolean(dump_only=True)
@@ -56,16 +57,24 @@ class TaskSchema(Schema):
     template_fields = fields.List(fields.String(), dump_only=True)
     sub_dag = fields.Nested(DAGSchema, dump_only=True)
     downstream_task_ids = fields.List(fields.String(), dump_only=True)
+    params = fields.Method('get_params', dump_only=True)
+    is_mapped = fields.Boolean(dump_only=True)
 
     def _get_class_reference(self, obj):
         result = ClassReferenceSchema().dump(obj)
         return result.data if hasattr(result, "data") else result
 
+    @staticmethod
+    def get_params(obj):
+        """Get the Params defined in a Task"""
+        params = obj.params
+        return {k: v.dump() for k, v in params.items()}
+
 
 class TaskCollection(NamedTuple):
     """List of Tasks with metadata"""
 
-    tasks: List[BaseOperator]
+    tasks: List[Operator]
     total_entries: int
 
 

@@ -20,13 +20,15 @@
 Example Airflow DAG for Google BigQuery service.
 """
 import os
+from datetime import datetime
 
 from airflow import models
 from airflow.providers.google.cloud.operators.bigquery import (
-    BigQueryCreateEmptyDatasetOperator, BigQueryCreateEmptyTableOperator, BigQueryDeleteDatasetOperator,
+    BigQueryCreateEmptyDatasetOperator,
+    BigQueryCreateEmptyTableOperator,
+    BigQueryDeleteDatasetOperator,
 )
 from airflow.providers.google.cloud.transfers.bigquery_to_bigquery import BigQueryToBigQueryOperator
-from airflow.utils.dates import days_ago
 
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "example-project")
 DATASET_NAME = os.environ.get("GCP_BIGQUERY_DATASET_NAME", "test_dataset_transfer")
@@ -35,8 +37,9 @@ TARGET = "target"
 
 with models.DAG(
     "example_bigquery_to_bigquery",
-    schedule_interval=None,  # Override to match your needs
-    start_date=days_ago(1),
+    schedule_interval='@once',  # Override to match your needs
+    start_date=datetime(2021, 1, 1),
+    catchup=False,
     tags=["example"],
 ) as dag:
     copy_selected_data = BigQueryToBigQueryOperator(
@@ -45,9 +48,7 @@ with models.DAG(
         destination_project_dataset_table=f"{DATASET_NAME}.{TARGET}",
     )
 
-    create_dataset = BigQueryCreateEmptyDatasetOperator(
-        task_id="create_dataset", dataset_id=DATASET_NAME
-    )
+    create_dataset = BigQueryCreateEmptyDatasetOperator(task_id="create_dataset", dataset_id=DATASET_NAME)
 
     for table in [ORIGIN, TARGET]:
         create_table = BigQueryCreateEmptyTableOperator(

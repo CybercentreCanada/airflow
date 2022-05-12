@@ -14,17 +14,17 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
 from airflow.api_connexion.schemas.health_schema import health_schema
+from airflow.api_connexion.types import APIResponse
 from airflow.jobs.scheduler_job import SchedulerJob
 
 HEALTHY = "healthy"
 UNHEALTHY = "unhealthy"
 
 
-def get_health():
-    """
-    Return the health of the airflow scheduler and metadatabase
-    """
+def get_health() -> APIResponse:
+    """Return the health of the airflow scheduler and metadatabase"""
     metadatabase_status = HEALTHY
     latest_scheduler_heartbeat = None
     scheduler_status = UNHEALTHY
@@ -35,7 +35,7 @@ def get_health():
             latest_scheduler_heartbeat = scheduler_job.latest_heartbeat.isoformat()
             if scheduler_job.is_alive():
                 scheduler_status = HEALTHY
-    except Exception:  # pylint: disable=broad-except
+    except Exception:
         metadatabase_status = UNHEALTHY
 
     payload = {

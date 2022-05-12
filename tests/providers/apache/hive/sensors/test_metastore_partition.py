@@ -21,13 +21,10 @@ import unittest
 from unittest import mock
 
 from airflow.providers.apache.hive.sensors.metastore_partition import MetastorePartitionSensor
-from tests.providers.apache.hive import DEFAULT_DATE, DEFAULT_DATE_DS, TestHiveEnvironment
-from tests.test_utils.mock_process import MockDBConnection
+from tests.providers.apache.hive import DEFAULT_DATE, DEFAULT_DATE_DS, MockDBConnection, TestHiveEnvironment
 
 
-@unittest.skipIf(
-    'AIRFLOW_RUNALL_TESTS' not in os.environ,
-    "Skipped because AIRFLOW_RUNALL_TESTS is not set")
+@unittest.skipIf('AIRFLOW_RUNALL_TESTS' not in os.environ, "Skipped because AIRFLOW_RUNALL_TESTS is not set")
 class TestHivePartitionSensor(TestHiveEnvironment):
     def test_hive_metastore_sql_sensor(self):
         op = MetastorePartitionSensor(
@@ -35,8 +32,8 @@ class TestHivePartitionSensor(TestHiveEnvironment):
             conn_id='test_connection_id',
             sql='test_sql',
             table='airflow.static_babynames_partitioned',
-            partition_name='ds={}'.format(DEFAULT_DATE_DS),
-            dag=self.dag)
+            partition_name=f'ds={DEFAULT_DATE_DS}',
+            dag=self.dag,
+        )
         op._get_hook = mock.MagicMock(return_value=MockDBConnection({}))
-        op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE,
-               ignore_ti_state=True)
+        op.run(start_date=DEFAULT_DATE, end_date=DEFAULT_DATE, ignore_ti_state=True)

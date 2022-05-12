@@ -17,15 +17,19 @@
 
 from typing import List, NamedTuple
 
+from itsdangerous import URLSafeSerializer
 from marshmallow import Schema, fields
 from marshmallow_sqlalchemy import SQLAlchemySchema, auto_field
 
+from airflow import DAG
 from airflow.api_connexion.schemas.common_schema import ScheduleIntervalSchema, TimeDeltaSchema, TimezoneField
+from airflow.configuration import conf
 from airflow.models.dag import DagModel, DagTag
 
 
 class DagTagSchema(SQLAlchemySchema):
     """Dag Tag schema"""
+
     class Meta:
         """Meta"""
 
@@ -39,38 +43,107 @@ class DAGSchema(SQLAlchemySchema):
 
     class Meta:
         """Meta"""
+
         model = DagModel
 
     dag_id = auto_field(dump_only=True)
     root_dag_id = auto_field(dump_only=True)
-    is_paused = auto_field(dump_only=True)
+    is_paused = auto_field()
+    is_active = auto_field(dump_only=True)
     is_subdag = auto_field(dump_only=True)
+    last_parsed_time = auto_field(dump_only=True)
+    last_pickled = auto_field(dump_only=True)
+    last_expired = auto_field(dump_only=True)
+    scheduler_lock = auto_field(dump_only=True)
+    pickle_id = auto_field(dump_only=True)
+    default_view = auto_field(dump_only=True)
     fileloc = auto_field(dump_only=True)
+    file_token = fields.Method("get_token", dump_only=True)
     owners = fields.Method("get_owners", dump_only=True)
     description = auto_field(dump_only=True)
-    schedule_interval = fields.Nested(ScheduleIntervalSchema, dump_only=True)
+    schedule_interval = fields.Nested(ScheduleIntervalSchema)
+    timetable_description = auto_field(dump_only=True)
     tags = fields.List(fields.Nested(DagTagSchema), dump_only=True)
+    max_active_tasks = auto_field(dump_only=True)
+    max_active_runs = auto_field(dump_only=True)
+    has_task_concurrency_limits = auto_field(dump_only=True)
+    has_import_errors = auto_field(dump_only=True)
+    next_dagrun = auto_field(dump_only=True)
+    next_dagrun_data_interval_start = auto_field(dump_only=True)
+    next_dagrun_data_interval_end = auto_field(dump_only=True)
+    next_dagrun_create_after = auto_field(dump_only=True)
 
     @staticmethod
     def get_owners(obj: DagModel):
         """Convert owners attribute to DAG representation"""
-
         if not getattr(obj, 'owners', None):
             return []
         return obj.owners.split(",")
+
+    @staticmethod
+    def get_token(obj: DagModel):
+        """Return file token"""
+        serializer = URLSafeSerializer(conf.get('webserver', 'secret_key'))
+        return serializer.dumps(obj.fileloc)
 
 
 class DAGDetailSchema(DAGSchema):
     """DAG details"""
 
-    timezone = TimezoneField(dump_only=True)
-    catchup = fields.Boolean(dump_only=True)
-    orientation = fields.String(dump_only=True)
-    concurrency = fields.Integer(dump_only=True)
-    start_date = fields.DateTime(dump_only=True)
-    dag_run_timeout = fields.Nested(TimeDeltaSchema, dump_only=True, attribute="dagrun_timeout")
-    doc_md = fields.String(dump_only=True)
-    default_view = fields.String(dump_only=True)
+    owners = fields.Method("get_owners", dump_only=True)
+    timezone = TimezoneField()
+    catchup = fields.Boolean()
+    orientation = fields.String()
+    concurrency = fields.Method("get_concurrency")  # TODO: Remove in Airflow 3.0
+    max_active_tasks = fields.Integer()
+    start_date = fields.DateTime()
+    dag_run_timeout = fields.Nested(TimeDeltaSchema, attribute="dagrun_timeout")
+    doc_md = fields.String()
+    default_view = fields.String()
+    params = fields.Method('get_params', dump_only=True)
+    tags = fields.Method("get_tags", dump_only=True)  # type: ignore
+    is_paused = fields.Method("get_is_paused", dump_only=True)
+    is_active = fields.Method("get_is_active", dump_only=True)
+    is_paused_upon_creation = fields.Boolean()
+    end_date = fields.DateTime(dump_only=True)
+    template_search_path = fields.String(dump_only=True)
+    render_template_as_native_obj = fields.Boolean(dump_only=True)
+    last_loaded = fields.DateTime(dump_only=True, data_key='last_parsed')
+
+    @staticmethod
+    def get_concurrency(obj: DAG):
+        return obj.max_active_tasks
+
+    @staticmethod
+    def get_tags(obj: DAG):
+        """Dumps tags as objects"""
+        tags = obj.tags
+        if tags:
+            return [DagTagSchema().dump(dict(name=tag)) for tag in tags]
+        return []
+
+    @staticmethod
+    def get_owners(obj: DAG):
+        """Convert owners attribute to DAG representation"""
+        if not getattr(obj, 'owner', None):
+            return []
+        return obj.owner.split(",")
+
+    @staticmethod
+    def get_is_paused(obj: DAG):
+        """Checks entry in DAG table to see if this DAG is paused"""
+        return obj.get_is_paused()
+
+    @staticmethod
+    def get_is_active(obj: DAG):
+        """Checks entry in DAG table to see if this DAG is active"""
+        return obj.get_is_active()
+
+    @staticmethod
+    def get_params(obj: DAG):
+        """Get the Params defined in a DAG"""
+        params = obj.params
+        return {k: v.dump() for k, v in params.items()}
 
 
 class DAGCollection(NamedTuple):

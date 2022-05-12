@@ -16,27 +16,25 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-This module contains GCP Stackdriver operators.
-"""
+"""This module contains Google Cloud Stackdriver operators."""
 
 import json
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Optional, Sequence, Tuple, Union
 
 from google.api_core.exceptions import InvalidArgument
-from google.api_core.gapic_v1.method import DEFAULT
+from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
+from google.api_core.retry import Retry
 from google.cloud import monitoring_v3
-from google.protobuf.json_format import MessageToDict, MessageToJson, Parse
+from google.cloud.monitoring_v3 import AlertPolicy, NotificationChannel
+from google.protobuf.field_mask_pb2 import FieldMask
 from googleapiclient.errors import HttpError
 
 from airflow.exceptions import AirflowException
-from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
+from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
 
 
 class StackdriverHook(GoogleBaseHook):
-    """
-    Stackdriver Hook for connecting with GCP Stackdriver
-    """
+    """Stackdriver Hook for connecting with Google Cloud Stackdriver"""
 
     def __init__(
         self,
@@ -65,14 +63,14 @@ class StackdriverHook(GoogleBaseHook):
     @GoogleBaseHook.fallback_to_default_project_id
     def list_alert_policies(
         self,
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         format_: Optional[str] = None,
         filter_: Optional[str] = None,
         order_by: Optional[str] = None,
         page_size: Optional[int] = None,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[float] = DEFAULT,
-        metadata: Optional[str] = None
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> Any:
         """
         Fetches all the Alert Policies identified by the filter passed as
@@ -84,48 +82,42 @@ class StackdriverHook(GoogleBaseHook):
         :param format_: (Optional) Desired output format of the result. The
             supported formats are "dict", "json" and None which returns
             python dictionary, stringified JSON and protobuf respectively.
-        :type format_: str
         :param filter_:  If provided, this field specifies the criteria that
             must be met by alert policies to be included in the response.
             For more details, see https://cloud.google.com/monitoring/api/v3/sorting-and-filtering.
-        :type filter_: str
         :param order_by: A comma-separated list of fields by which to sort the result.
             Supports the same set of field references as the ``filter`` field. Entries
             can be prefixed with a minus sign to sort by the field in descending order.
             For more details, see https://cloud.google.com/monitoring/api/v3/sorting-and-filtering.
-        :type order_by: str
         :param page_size: The maximum number of resources contained in the
             underlying API response. If page streaming is performed per-
             resource, this parameter does not affect the return value. If page
             streaming is performed per-page, this determines the maximum number
             of resources in a page.
-        :type page_size: int
         :param retry: A retry object used to retry requests. If ``None`` is
             specified, requests will be retried using a default configuration.
-        :type retry: str
         :param timeout: The amount of time, in seconds, to wait
             for the request to complete. Note that if ``retry`` is
             specified, the timeout applies to each individual attempt.
-        :type timeout: float
         :param metadata: Additional metadata that is provided to the method.
-        :type metadata: str
         :param project_id: The project to fetch alerts from.
-        :type project_id: str
         """
         client = self._get_policy_client()
         policies_ = client.list_alert_policies(
-            name='projects/{project_id}'.format(project_id=project_id),
-            filter_=filter_,
-            order_by=order_by,
-            page_size=page_size,
+            request={
+                'name': f'projects/{project_id}',
+                'filter': filter_,
+                'order_by': order_by,
+                'page_size': page_size,
+            },
             retry=retry,
             timeout=timeout,
             metadata=metadata,
         )
         if format_ == "dict":
-            return [MessageToDict(policy) for policy in policies_]
+            return [AlertPolicy.to_dict(policy) for policy in policies_]
         elif format_ == "json":
-            return [MessageToJson(policy) for policy in policies_]
+            return [AlertPolicy.to_jsoon(policy) for policy in policies_]
         else:
             return policies_
 
@@ -133,55 +125,48 @@ class StackdriverHook(GoogleBaseHook):
     def _toggle_policy_status(
         self,
         new_state: bool,
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         filter_: Optional[str] = None,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[float] = DEFAULT,
-        metadata: Optional[str] = None
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ):
         client = self._get_policy_client()
         policies_ = self.list_alert_policies(project_id=project_id, filter_=filter_)
         for policy in policies_:
-            if policy.enabled.value != bool(new_state):
-                policy.enabled.value = bool(new_state)
-                mask = monitoring_v3.types.field_mask_pb2.FieldMask()
-                mask.paths.append('enabled')  # pylint: disable=no-member
+            if policy.enabled != bool(new_state):
+                policy.enabled = bool(new_state)
+                mask = FieldMask(paths=['enabled'])
                 client.update_alert_policy(
-                    alert_policy=policy,
-                    update_mask=mask,
+                    request={'alert_policy': policy, 'update_mask': mask},
                     retry=retry,
                     timeout=timeout,
-                    metadata=metadata
+                    metadata=metadata,
                 )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def enable_alert_policies(
         self,
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         filter_: Optional[str] = None,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[float] = DEFAULT,
-        metadata: Optional[str] = None
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> None:
         """
         Enables one or more disabled alerting policies identified by filter
         parameter. Inoperative in case the policy is already enabled.
 
         :param project_id: The project in which alert needs to be enabled.
-        :type project_id: str
         :param filter_:  If provided, this field specifies the criteria that
             must be met by alert policies to be enabled.
             For more details, see https://cloud.google.com/monitoring/api/v3/sorting-and-filtering.
-        :type filter_: str
         :param retry: A retry object used to retry requests. If ``None`` is
             specified, requests will be retried using a default configuration.
-        :type retry: str
         :param timeout: The amount of time, in seconds, to wait
             for the request to complete. Note that if ``retry`` is
             specified, the timeout applies to each individual attempt.
-        :type timeout: float
         :param metadata: Additional metadata that is provided to the method.
-        :type metadata: str
         """
         self._toggle_policy_status(
             new_state=True,
@@ -189,37 +174,32 @@ class StackdriverHook(GoogleBaseHook):
             filter_=filter_,
             retry=retry,
             timeout=timeout,
-            metadata=metadata
+            metadata=metadata,
         )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def disable_alert_policies(
         self,
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         filter_: Optional[str] = None,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[float] = DEFAULT,
-        metadata: Optional[str] = None
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> None:
         """
         Disables one or more enabled alerting policies identified by filter
         parameter. Inoperative in case the policy is already disabled.
 
         :param project_id: The project in which alert needs to be disabled.
-        :type project_id: str
         :param filter_:  If provided, this field specifies the criteria that
             must be met by alert policies to be disabled.
             For more details, see https://cloud.google.com/monitoring/api/v3/sorting-and-filtering.
-        :type filter_: str
         :param retry: A retry object used to retry requests. If ``None`` is
             specified, requests will be retried using a default configuration.
-        :type retry: str
         :param timeout: The amount of time, in seconds, to wait
             for the request to complete. Note that if ``retry`` is
             specified, the timeout applies to each individual attempt.
-        :type timeout: float
         :param metadata: Additional metadata that is provided to the method.
-        :type metadata: str
         """
         self._toggle_policy_status(
             filter_=filter_,
@@ -227,85 +207,80 @@ class StackdriverHook(GoogleBaseHook):
             new_state=False,
             retry=retry,
             timeout=timeout,
-            metadata=metadata
+            metadata=metadata,
         )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def upsert_alert(
         self,
         alerts: str,
-        project_id: str,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[float] = DEFAULT,
-        metadata: Optional[str] = None
+        project_id: str = PROVIDE_PROJECT_ID,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> None:
         """
          Creates a new alert or updates an existing policy identified
          the name field in the alerts parameter.
 
         :param project_id: The project in which alert needs to be created/updated.
-        :type project_id: str
         :param alerts: A JSON string or file that specifies all the alerts that needs
              to be either created or updated. For more details, see
              https://cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.alertPolicies#AlertPolicy.
              (templated)
-        :type alerts: str
         :param retry: A retry object used to retry requests. If ``None`` is
             specified, requests will be retried using a default configuration.
-        :type retry: str
         :param timeout: The amount of time, in seconds, to wait
             for the request to complete. Note that if ``retry`` is
             specified, the timeout applies to each individual attempt.
-        :type timeout: float
         :param metadata: Additional metadata that is provided to the method.
-        :type metadata: str
         """
         policy_client = self._get_policy_client()
         channel_client = self._get_channel_client()
 
         record = json.loads(alerts)
-        existing_policies = [policy['name'] for policy in
-                             self.list_alert_policies(project_id=project_id, format_='dict')]
-        existing_channels = [channel['name'] for channel in
-                             self.list_notification_channels(project_id=project_id, format_='dict')]
+        existing_policies = [
+            policy['name'] for policy in self.list_alert_policies(project_id=project_id, format_='dict')
+        ]
+        existing_channels = [
+            channel['name']
+            for channel in self.list_notification_channels(project_id=project_id, format_='dict')
+        ]
         policies_ = []
         channels = []
-
-        for channel in record["channels"]:
-            channel_json = json.dumps(channel)
-            channels.append(Parse(channel_json, monitoring_v3.types.notification_pb2.NotificationChannel()))
-        for policy in record["policies"]:
-            policy_json = json.dumps(policy)
-            policies_.append(Parse(policy_json, monitoring_v3.types.alert_pb2.AlertPolicy()))
+        for channel in record.get("channels", []):
+            channels.append(NotificationChannel(**channel))
+        for policy in record.get("policies", []):
+            policies_.append(AlertPolicy(**policy))
 
         channel_name_map = {}
 
         for channel in channels:
-            channel.verification_status = monitoring_v3.enums.NotificationChannel. \
-                VerificationStatus.VERIFICATION_STATUS_UNSPECIFIED
+            channel.verification_status = (
+                monitoring_v3.NotificationChannel.VerificationStatus.VERIFICATION_STATUS_UNSPECIFIED
+            )
 
             if channel.name in existing_channels:
                 channel_client.update_notification_channel(
-                    notification_channel=channel,
+                    request={'notification_channel': channel},
                     retry=retry,
                     timeout=timeout,
-                    metadata=metadata
+                    metadata=metadata,
                 )
             else:
                 old_name = channel.name
-                channel.ClearField('name')
+                channel.name = None
                 new_channel = channel_client.create_notification_channel(
-                    name='projects/{project_id}'.format(project_id=project_id),
-                    notification_channel=channel,
+                    request={'name': f'projects/{project_id}', 'notification_channel': channel},
                     retry=retry,
                     timeout=timeout,
-                    metadata=metadata
+                    metadata=metadata,
                 )
                 channel_name_map[old_name] = new_channel.name
 
         for policy in policies_:
-            policy.ClearField('creation_record')
-            policy.ClearField('mutation_record')
+            policy.creation_record = None
+            policy.mutation_record = None
 
             for i, channel in enumerate(policy.notification_channels):
                 new_channel = channel_name_map.get(channel)
@@ -315,73 +290,62 @@ class StackdriverHook(GoogleBaseHook):
             if policy.name in existing_policies:
                 try:
                     policy_client.update_alert_policy(
-                        alert_policy=policy,
+                        request={'alert_policy': policy},
                         retry=retry,
                         timeout=timeout,
-                        metadata=metadata
+                        metadata=metadata,
                     )
                 except InvalidArgument:
                     pass
             else:
-                policy.ClearField('name')
+                policy.name = None
                 for condition in policy.conditions:
-                    condition.ClearField('name')
+                    condition.name = None
                 policy_client.create_alert_policy(
-                    name='projects/{project_id}'.format(project_id=project_id),
-                    alert_policy=policy,
+                    request={'name': f'projects/{project_id}', 'alert_policy': policy},
                     retry=retry,
                     timeout=timeout,
-                    metadata=None
+                    metadata=metadata,
                 )
 
     def delete_alert_policy(
         self,
         name: str,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[float] = DEFAULT,
-        metadata: Optional[str] = None
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> None:
         """
         Deletes an alerting policy.
 
         :param name: The alerting policy to delete. The format is:
                          ``projects/[PROJECT_ID]/alertPolicies/[ALERT_POLICY_ID]``.
-        :type name: str
         :param retry: A retry object used to retry requests. If ``None`` is
             specified, requests will be retried using a default configuration.
-        :type retry: str
         :param timeout: The amount of time, in seconds, to wait
             for the request to complete. Note that if ``retry`` is
             specified, the timeout applies to each individual attempt.
-        :type timeout: float
         :param metadata: Additional metadata that is provided to the method.
-        :type metadata: str
         """
-
         policy_client = self._get_policy_client()
         try:
             policy_client.delete_alert_policy(
-                name=name,
-                retry=retry,
-                timeout=timeout,
-                metadata=metadata
+                request={'name': name}, retry=retry, timeout=timeout, metadata=metadata or ()
             )
         except HttpError as err:
-            raise AirflowException(
-                'Delete alerting policy failed. Error was {}'.format(err.content)
-            )
+            raise AirflowException(f'Delete alerting policy failed. Error was {err.content}')
 
     @GoogleBaseHook.fallback_to_default_project_id
     def list_notification_channels(
         self,
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         format_: Optional[str] = None,
         filter_: Optional[str] = None,
         order_by: Optional[str] = None,
         page_size: Optional[int] = None,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[str] = DEFAULT,
-        metadata: Optional[str] = None,
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> Any:
         """
         Fetches all the Notification Channels identified by the filter passed as
@@ -393,49 +357,42 @@ class StackdriverHook(GoogleBaseHook):
         :param format_: (Optional) Desired output format of the result. The
             supported formats are "dict", "json" and None which returns
             python dictionary, stringified JSON and protobuf respectively.
-        :type format_: str
         :param filter_:  If provided, this field specifies the criteria that
             must be met by notification channels to be included in the response.
             For more details, see https://cloud.google.com/monitoring/api/v3/sorting-and-filtering.
-        :type filter_: str
         :param order_by: A comma-separated list of fields by which to sort the result.
             Supports the same set of field references as the ``filter`` field. Entries
             can be prefixed with a minus sign to sort by the field in descending order.
             For more details, see https://cloud.google.com/monitoring/api/v3/sorting-and-filtering.
-        :type order_by: str
         :param page_size: The maximum number of resources contained in the
             underlying API response. If page streaming is performed per-
             resource, this parameter does not affect the return value. If page
             streaming is performed per-page, this determines the maximum number
             of resources in a page.
-        :type page_size: int
         :param retry: A retry object used to retry requests. If ``None`` is
             specified, requests will be retried using a default configuration.
-        :type retry: str
         :param timeout: The amount of time, in seconds, to wait
             for the request to complete. Note that if ``retry`` is
             specified, the timeout applies to each individual attempt.
-        :type timeout: float
         :param metadata: Additional metadata that is provided to the method.
-        :type metadata: str
         :param project_id: The project to fetch notification channels from.
-        :type project_id: str
         """
-
         client = self._get_channel_client()
         channels = client.list_notification_channels(
-            name='projects/{project_id}'.format(project_id=project_id),
-            filter_=filter_,
-            order_by=order_by,
-            page_size=page_size,
+            request={
+                'name': f'projects/{project_id}',
+                'filter': filter_,
+                'order_by': order_by,
+                'page_size': page_size,
+            },
             retry=retry,
             timeout=timeout,
             metadata=metadata,
         )
         if format_ == "dict":
-            return [MessageToDict(channel) for channel in channels]
+            return [NotificationChannel.to_dict(channel) for channel in channels]
         elif format_ == "json":
-            return [MessageToJson(channel) for channel in channels]
+            return [NotificationChannel.to_json(channel) for channel in channels]
         else:
             return channels
 
@@ -443,67 +400,58 @@ class StackdriverHook(GoogleBaseHook):
     def _toggle_channel_status(
         self,
         new_state: bool,
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         filter_: Optional[str] = None,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[str] = DEFAULT,
-        metadata: Optional[str] = None
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> None:
         client = self._get_channel_client()
         channels = client.list_notification_channels(
-            name='projects/{project_id}'.format(project_id=project_id),
-            filter_=filter_
+            request={'name': f'projects/{project_id}', 'filter': filter_}
         )
         for channel in channels:
-            if channel.enabled.value != bool(new_state):
-                channel.enabled.value = bool(new_state)
-                mask = monitoring_v3.types.field_mask_pb2.FieldMask()
-                mask.paths.append('enabled')  # pylint: disable=no-member
+            if channel.enabled != bool(new_state):
+                channel.enabled = bool(new_state)
+                mask = FieldMask(paths=['enabled'])
                 client.update_notification_channel(
-                    notification_channel=channel,
-                    update_mask=mask,
+                    request={'notification_channel': channel, 'update_mask': mask},
                     retry=retry,
                     timeout=timeout,
-                    metadata=metadata
+                    metadata=metadata,
                 )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def enable_notification_channels(
         self,
-        project_id: str,
+        project_id: str = PROVIDE_PROJECT_ID,
         filter_: Optional[str] = None,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[str] = DEFAULT,
-        metadata: Optional[str] = None
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> None:
         """
         Enables one or more disabled alerting policies identified by filter
         parameter. Inoperative in case the policy is already enabled.
 
         :param project_id: The project in which notification channels needs to be enabled.
-        :type project_id: str
         :param filter_:  If provided, this field specifies the criteria that
             must be met by notification channels to be enabled.
             For more details, see https://cloud.google.com/monitoring/api/v3/sorting-and-filtering.
-        :type filter_: str
         :param retry: A retry object used to retry requests. If ``None`` is
             specified, requests will be retried using a default configuration.
-        :type retry: str
         :param timeout: The amount of time, in seconds, to wait
             for the request to complete. Note that if ``retry`` is
             specified, the timeout applies to each individual attempt.
-        :type timeout: float
         :param metadata: Additional metadata that is provided to the method.
-        :type metadata: str
         """
-
         self._toggle_channel_status(
             project_id=project_id,
             filter_=filter_,
             new_state=True,
             retry=retry,
             timeout=timeout,
-            metadata=metadata
+            metadata=metadata,
         )
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -511,38 +459,32 @@ class StackdriverHook(GoogleBaseHook):
         self,
         project_id: str,
         filter_: Optional[str] = None,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[str] = DEFAULT,
-        metadata: Optional[str] = None
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> None:
         """
         Disables one or more enabled notification channels identified by filter
         parameter. Inoperative in case the policy is already disabled.
 
         :param project_id: The project in which notification channels needs to be enabled.
-        :type project_id: str
         :param filter_:  If provided, this field specifies the criteria that
             must be met by alert policies to be disabled.
             For more details, see https://cloud.google.com/monitoring/api/v3/sorting-and-filtering.
-        :type filter_: str
         :param retry: A retry object used to retry requests. If ``None`` is
             specified, requests will be retried using a default configuration.
-        :type retry: str
         :param timeout: The amount of time, in seconds, to wait
             for the request to complete. Note that if ``retry`` is
             specified, the timeout applies to each individual attempt.
-        :type timeout: float
         :param metadata: Additional metadata that is provided to the method.
-        :type metadata: str
         """
-
         self._toggle_channel_status(
             filter_=filter_,
             project_id=project_id,
             new_state=False,
             retry=retry,
             timeout=timeout,
-            metadata=metadata
+            metadata=metadata,
         )
 
     @GoogleBaseHook.fallback_to_default_project_id
@@ -550,10 +492,10 @@ class StackdriverHook(GoogleBaseHook):
         self,
         channels: str,
         project_id: str,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[float] = DEFAULT,
-        metadata: Optional[str] = None
-    ) -> Dict:
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
+    ) -> dict:
         """
         Creates a new notification or updates an existing notification channel
         identified the name field in the alerts parameter.
@@ -562,54 +504,47 @@ class StackdriverHook(GoogleBaseHook):
             to be either created or updated. For more details, see
             https://cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.notificationChannels.
             (templated)
-        :type channels: str
         :param project_id: The project in which notification channels needs to be created/updated.
-        :type project_id: str
         :param retry: A retry object used to retry requests. If ``None`` is
             specified, requests will be retried using a default configuration.
-        :type retry: str
         :param timeout: The amount of time, in seconds, to wait
             for the request to complete. Note that if ``retry`` is
             specified, the timeout applies to each individual attempt.
-        :type timeout: float
         :param metadata: Additional metadata that is provided to the method.
-        :type metadata: str
         """
-
         channel_client = self._get_channel_client()
 
         record = json.loads(channels)
-        existing_channels = [channel["name"] for channel in
-                             self.list_notification_channels(project_id=project_id, format_="dict")]
+        existing_channels = [
+            channel["name"]
+            for channel in self.list_notification_channels(project_id=project_id, format_="dict")
+        ]
         channels_list = []
         channel_name_map = {}
 
         for channel in record["channels"]:
-            channel_json = json.dumps(channel)
-            channels_list.append(
-                Parse(channel_json, monitoring_v3.types.notification_pb2.NotificationChannel())
-            )
+            channels_list.append(NotificationChannel(**channel))
 
         for channel in channels_list:
-            channel.verification_status = monitoring_v3.enums.NotificationChannel. \
-                VerificationStatus.VERIFICATION_STATUS_UNSPECIFIED
+            channel.verification_status = (
+                monitoring_v3.NotificationChannel.VerificationStatus.VERIFICATION_STATUS_UNSPECIFIED
+            )
 
             if channel.name in existing_channels:
                 channel_client.update_notification_channel(
-                    notification_channel=channel,
+                    request={'notification_channel': channel},
                     retry=retry,
                     timeout=timeout,
-                    metadata=metadata
+                    metadata=metadata,
                 )
             else:
                 old_name = channel.name
-                channel.ClearField('name')
+                channel.name = None
                 new_channel = channel_client.create_notification_channel(
-                    name='projects/{project_id}'.format(project_id=project_id),
-                    notification_channel=channel,
+                    request={'name': f'projects/{project_id}', 'notification_channel': channel},
                     retry=retry,
                     timeout=timeout,
-                    metadata=metadata
+                    metadata=metadata,
                 )
                 channel_name_map[old_name] = new_channel.name
 
@@ -618,36 +553,26 @@ class StackdriverHook(GoogleBaseHook):
     def delete_notification_channel(
         self,
         name: str,
-        retry: Optional[str] = DEFAULT,
-        timeout: Optional[str] = DEFAULT,
-        metadata: Optional[str] = None
+        retry: Union[Retry, _MethodDefault] = DEFAULT,
+        timeout: Optional[float] = None,
+        metadata: Sequence[Tuple[str, str]] = (),
     ) -> None:
         """
         Deletes a notification channel.
 
         :param name: The alerting policy to delete. The format is:
                          ``projects/[PROJECT_ID]/notificationChannels/[CHANNEL_ID]``.
-        :type name: str
         :param retry: A retry object used to retry requests. If ``None`` is
             specified, requests will be retried using a default configuration.
-        :type retry: str
         :param timeout: The amount of time, in seconds, to wait
             for the request to complete. Note that if ``retry`` is
             specified, the timeout applies to each individual attempt.
-        :type timeout: float
         :param metadata: Additional metadata that is provided to the method.
-        :type metadata: str
         """
-
         channel_client = self._get_channel_client()
         try:
             channel_client.delete_notification_channel(
-                name=name,
-                retry=retry,
-                timeout=timeout,
-                metadata=metadata
+                request={'name': name}, retry=retry, timeout=timeout, metadata=metadata or ()
             )
         except HttpError as err:
-            raise AirflowException(
-                'Delete notification channel failed. Error was {}'.format(err.content)
-            )
+            raise AirflowException(f'Delete notification channel failed. Error was {err.content}')

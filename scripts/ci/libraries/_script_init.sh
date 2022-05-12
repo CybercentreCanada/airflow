@@ -16,25 +16,40 @@
 # specific language governing permissions and limitations
 # under the License.
 
-set -euo pipefail
+set -eo pipefail
 
-_CURRENT_DIR=$(dirname "${BASH_SOURCE[0]}")
+if [[ $(uname -s) != "Darwin" ]]; then
+    # do not fail with undefined variable on MacOS. The old Bash which is default on Mac OS
+    # fails with undefined variable when you are passing an empty variable and this causes
+    # problems for example when you try to pass empty list of arguments "${@}"
+    set -u
+fi
 
-SCRIPTS_CI_DIR="$(cd "${_CURRENT_DIR}"/.. && pwd)"
-export SCRIPTS_CI_DIR
-
-# Sets to where airflow sources are located
-AIRFLOW_SOURCES=${AIRFLOW_SOURCES:=$(cd "${SCRIPTS_CI_DIR}/../../" && pwd)}
-export AIRFLOW_SOURCES
-
+export AIRFLOW_SOURCES="${AIRFLOW_SOURCES:=$( cd "$( dirname "${BASH_SOURCE[0]}" )/../../.." && pwd )}"
+readonly AIRFLOW_SOURCES
 
 # shellcheck source=scripts/ci/libraries/_all_libs.sh
-. "${SCRIPTS_CI_DIR}"/libraries/_all_libs.sh
+. "${AIRFLOW_SOURCES}/scripts/ci/libraries/_all_libs.sh"
 
-initialize_common_environment
+initialization::create_directories
 
-basic_sanity_checks
+initialization::initialize_common_environment
 
-script_start
+initialization::check_docker_version
 
-trap script_end EXIT
+sanity_checks::basic_sanity_checks
+
+start_end::script_start
+
+initialization::get_docker_cache_image_names
+
+initialization::get_environment_for_builds_on_ci
+
+initialization::make_constants_read_only
+
+# Work around occasional unexplained failure on CI. Clear file flags on
+# STDOUT (which is connected to a tmp file by GitHub Runner).
+# The one error I did see: BlockingIOError: [Errno 11] write could not complete without blocking
+[[ "$CI" == "true" ]] && python3 -c "import fcntl; fcntl.fcntl(1, fcntl.F_SETFL, 0)"
+
+traps::add_trap start_end::script_end EXIT HUP INT TERM

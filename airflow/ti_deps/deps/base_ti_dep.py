@@ -30,8 +30,8 @@ class BaseTIDep:
     """
 
     # If this dependency can be ignored by a context in which it is added to. Needed
-    # because some dependencies should never be ignoreable in their contexts.
-    IGNOREABLE = False
+    # because some dependencies should never be ignorable in their contexts.
+    IGNORABLE = False
 
     # Whether this dependency is not a global task instance dependency but specific
     # to some tasks (e.g. depends_on_past is not specified by all tasks).
@@ -47,7 +47,7 @@ class BaseTIDep:
         return hash(type(self))
 
     def __repr__(self):
-        return "<TIDep({self.name})>".format(self=self)
+        return f"<TIDep({self.name})>"
 
     @property
     def name(self):
@@ -66,11 +66,8 @@ class BaseTIDep:
         representing if each of the passed in task's upstream tasks succeeded or not.
 
         :param ti: the task instance to get the dependency status for
-        :type ti: airflow.models.TaskInstance
         :param session: database session
-        :type session: sqlalchemy.orm.session.Session
         :param dep_context: the context for which this dependency should be evaluated for
-        :type dep_context: DepContext
         """
         raise NotImplementedError
 
@@ -81,23 +78,18 @@ class BaseTIDep:
         checks for all dependencies.
 
         :param ti: the task instance to get the dependency status for
-        :type ti: airflow.models.TaskInstance
         :param session: database session
-        :type session: sqlalchemy.orm.session.Session
         :param dep_context: the context for which this dependency should be evaluated for
-        :type dep_context: DepContext
         """
         if dep_context is None:
             dep_context = DepContext()
 
-        if self.IGNOREABLE and dep_context.ignore_all_deps:
-            yield self._passing_status(
-                reason="Context specified all dependencies should be ignored.")
+        if self.IGNORABLE and dep_context.ignore_all_deps:
+            yield self._passing_status(reason="Context specified all dependencies should be ignored.")
             return
 
         if self.IS_TASK_DEP and dep_context.ignore_task_deps:
-            yield self._passing_status(
-                reason="Context specified all task dependencies should be ignored.")
+            yield self._passing_status(reason="Context specified all task dependencies should be ignored.")
             return
 
         yield from self._get_dep_statuses(ti, session, dep_context)
@@ -110,15 +102,11 @@ class BaseTIDep:
         passing.
 
         :param ti: the task instance to see if this dependency is met for
-        :type ti: airflow.models.TaskInstance
         :param session: database session
-        :type session: sqlalchemy.orm.session.Session
         :param dep_context: The context this dependency is being checked under that stores
             state that can be used by this dependency.
-        :type dep_context: BaseDepContext
         """
-        return all(status.passed for status in
-                   self.get_dep_statuses(ti, session, dep_context))
+        return all(status.passed for status in self.get_dep_statuses(ti, session, dep_context))
 
     @provide_session
     def get_failure_reasons(self, ti, session, dep_context=None):
@@ -126,12 +114,9 @@ class BaseTIDep:
         Returns an iterable of strings that explain why this dependency wasn't met.
 
         :param ti: the task instance to see if this dependency is met for
-        :type ti: airflow.models.TaskInstance
         :param session: database session
-        :type session: sqlalchemy.orm.session.Session
         :param dep_context: The context this dependency is being checked under that stores
             state that can be used by this dependency.
-        :type dep_context: BaseDepContext
         """
         for dep_status in self.get_dep_statuses(ti, session, dep_context):
             if not dep_status.passed:
@@ -149,6 +134,7 @@ class TIDepStatus(NamedTuple):
     Dependency status for a specific task instance indicating whether or not the task
     instance passed the dependency.
     """
+
     dep_name: str
     passed: bool
     reason: str

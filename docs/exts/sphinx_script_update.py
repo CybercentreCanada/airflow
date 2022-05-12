@@ -17,9 +17,10 @@
 import hashlib
 import json
 import os
+import shutil
 import sys
 import tempfile
-from distutils.file_util import copy_file
+from functools import lru_cache
 from typing import Dict
 
 import requests
@@ -29,15 +30,18 @@ from sphinx.util import logging
 log = logging.getLogger(__name__)
 
 
+def _copy_file(src: str, dst: str) -> None:
+    log.info("Copying %s -> %s", src, dst)
+    shutil.copy2(src, dst, follow_symlinks=False)
+
+
 def _gethash(string: str):
     hash_object = hashlib.sha256(string.encode())
     return hash_object.hexdigest()
 
 
 def _user_cache_dir(appname=None):
-    """
-    Return full path to the user-specific cache dir for this application
-    """
+    """Return full path to the user-specific cache dir for this application"""
     if sys.platform == "win32":
         # Windows has a complex procedure to download the App Dir directory because this directory can be
         # changed in window registry, so i use temporary directory for cache
@@ -50,6 +54,7 @@ def _user_cache_dir(appname=None):
     return path
 
 
+@lru_cache(maxsize=None)
 def fetch_and_cache(script_url: str, output_filename: str):
     """Fetch URL to local cache and returns path."""
     cache_key = _gethash(script_url)
@@ -62,7 +67,7 @@ def fetch_and_cache(script_url: str, output_filename: str):
     cache_metadata: Dict[str, str] = {}
     if os.path.exists(cache_metadata_filepath):
         try:
-            with open(cache_metadata_filepath, "r") as cache_file:
+            with open(cache_metadata_filepath) as cache_file:
                 cache_metadata = json.load(cache_file)
         except json.JSONDecodeError:
             os.remove(cache_metadata_filepath)
@@ -91,23 +96,27 @@ def fetch_and_cache(script_url: str, output_filename: str):
     return cache_filepath
 
 
+def builder_inited(app):
+    """Sphinx "builder-inited" event handler."""
+    script_url = app.config.redoc_script_url
+    output_filename = "script.js"
+
+    fetch_and_cache(script_url, output_filename)
+
+
 def build_finished(app, exception):
-    """Sphinx "build_finished" event handler."""
-    if exception:
-        return
-    if not isinstance(app.builder, builders.StandaloneHTMLBuilder):
-        log.warning(
-            F"The plugin is support only 'html' builder, but you are using '{type(app.builder)}'. Skipping..."
-        )
+    """Sphinx "build-finished" event handler."""
+    if exception or not isinstance(app.builder, builders.StandaloneHTMLBuilder):
         return
     script_url = app.config.redoc_script_url
     output_filename = "script.js"
 
     cache_filepath = fetch_and_cache(script_url, output_filename)
-    copy_file(cache_filepath, os.path.join(app.builder.outdir, '_static', "redoc.js"))
+    _copy_file(cache_filepath, os.path.join(app.builder.outdir, '_static', "redoc.js"))
 
 
 def setup(app):
     """Setup plugin"""
     app.add_config_value("redoc_script_url", None, "env")
+    app.connect("builder-inited", builder_inited)
     app.connect("build-finished", build_finished)

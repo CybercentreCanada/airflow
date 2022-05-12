@@ -14,18 +14,27 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from operator import attrgetter
+
 from flask import current_app
 
 from airflow import DAG
-from airflow.api_connexion.exceptions import NotFound
+from airflow.api_connexion import security
+from airflow.api_connexion.exceptions import BadRequest, NotFound
 from airflow.api_connexion.schemas.task_schema import TaskCollection, task_collection_schema, task_schema
+from airflow.api_connexion.types import APIResponse
 from airflow.exceptions import TaskNotFound
+from airflow.security import permissions
 
 
-def get_task(dag_id, task_id):
-    """
-    Get simplified representation of a task.
-    """
+@security.requires_access(
+    [
+        (permissions.ACTION_CAN_READ, permissions.RESOURCE_DAG),
+        (permissions.ACTION_CAN_READ, permissions.RESOURCE_TASK_INSTANCE),
+    ],
+)
+def get_task(*, dag_id: str, task_id: str) -> APIResponse:
+    """Get simplified representation of a task."""
     dag: DAG = current_app.dag_bag.get_dag(dag_id)
     if not dag:
         raise NotFound("DAG not found")
@@ -37,13 +46,22 @@ def get_task(dag_id, task_id):
     return task_schema.dump(task)
 
 
-def get_tasks(dag_id):
-    """
-    Get tasks for DAG
-    """
+@security.requires_access(
+    [
+        (permissions.ACTION_CAN_READ, permissions.RESOURCE_DAG),
+        (permissions.ACTION_CAN_READ, permissions.RESOURCE_TASK_INSTANCE),
+    ],
+)
+def get_tasks(*, dag_id: str, order_by: str = "task_id") -> APIResponse:
+    """Get tasks for DAG"""
     dag: DAG = current_app.dag_bag.get_dag(dag_id)
     if not dag:
         raise NotFound("DAG not found")
     tasks = dag.tasks
+
+    try:
+        tasks = sorted(tasks, key=attrgetter(order_by.lstrip('-')), reverse=(order_by[0:1] == '-'))
+    except AttributeError as err:
+        raise BadRequest(detail=str(err))
     task_collection = TaskCollection(tasks=tasks, total_entries=len(tasks))
     return task_collection_schema.dump(task_collection)

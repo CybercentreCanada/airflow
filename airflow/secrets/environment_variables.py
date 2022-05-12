@@ -15,11 +15,10 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""
-Objects relating to sourcing connections from environment variables
-"""
+"""Objects relating to sourcing connections from environment variables"""
 
 import os
+import warnings
 from typing import Optional
 
 from airflow.secrets import BaseSecretsBackend
@@ -29,14 +28,24 @@ VAR_ENV_PREFIX = "AIRFLOW_VAR_"
 
 
 class EnvironmentVariablesBackend(BaseSecretsBackend):
-    """
-    Retrieves Connection object from environment variable.
-    """
+    """Retrieves Connection object and Variable from environment variable."""
 
-    # pylint: disable=missing-docstring
     def get_conn_uri(self, conn_id: str) -> Optional[str]:
-        environment_uri = os.environ.get(CONN_ENV_PREFIX + conn_id.upper())
-        return environment_uri
+        """
+        Return URI representation of Connection conn_id
+        :param conn_id: the connection id
+        :return: deserialized Connection
+        """
+        warnings.warn(
+            "This method is deprecated. Please use "
+            "`airflow.secrets.environment_variables.EnvironmentVariablesBackend.get_conn_value`.",
+            PendingDeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_conn_value(conn_id)
+
+    def get_conn_value(self, conn_id: str) -> Optional[str]:
+        return os.environ.get(CONN_ENV_PREFIX + conn_id.upper())
 
     def get_variable(self, key: str) -> Optional[str]:
         """

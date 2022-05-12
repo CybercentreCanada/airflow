@@ -16,13 +16,14 @@
 # specific language governing permissions and limitations
 # under the License.
 
-"""
-This module contains AWS Glue Catalog Hook
-"""
+"""This module contains AWS Glue Catalog Hook"""
+import warnings
+from typing import Optional, Set
+
 from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
 
 
-class AwsGlueCatalogHook(AwsBaseHook):
+class GlueCatalogHook(AwsBaseHook):
     """
     Interact with AWS Glue Catalog
 
@@ -36,27 +37,24 @@ class AwsGlueCatalogHook(AwsBaseHook):
     def __init__(self, *args, **kwargs):
         super().__init__(client_type='glue', *args, **kwargs)
 
-    def get_partitions(self,
-                       database_name,
-                       table_name,
-                       expression='',
-                       page_size=None,
-                       max_items=None):
+    def get_partitions(
+        self,
+        database_name: str,
+        table_name: str,
+        expression: str = '',
+        page_size: Optional[int] = None,
+        max_items: Optional[int] = None,
+    ) -> Set[tuple]:
         """
         Retrieves the partition values for a table.
 
         :param database_name: The name of the catalog database where the partitions reside.
-        :type database_name: str
         :param table_name: The name of the partitions' table.
-        :type table_name: str
         :param expression: An expression filtering the partitions to be returned.
             Please see official AWS documentation for further information.
             https://docs.aws.amazon.com/glue/latest/dg/aws-glue-api-catalog-partitions.html#aws-glue-api-catalog-partitions-GetPartitions
-        :type expression: str
         :param page_size: pagination size
-        :type page_size: int
         :param max_items: maximum items to return
-        :type max_items: int
         :return: set of partition values where each value is a tuple since
             a partition may be composed of multiple columns. For example:
             ``{('2018-01-01','1'), ('2018-01-01','2')}``
@@ -68,10 +66,7 @@ class AwsGlueCatalogHook(AwsBaseHook):
 
         paginator = self.get_conn().get_paginator('get_partitions')
         response = paginator.paginate(
-            DatabaseName=database_name,
-            TableName=table_name,
-            Expression=expression,
-            PaginationConfig=config
+            DatabaseName=database_name, TableName=table_name, Expression=expression, PaginationConfig=config
         )
 
         partitions = set()
@@ -81,20 +76,17 @@ class AwsGlueCatalogHook(AwsBaseHook):
 
         return partitions
 
-    def check_for_partition(self, database_name, table_name, expression):
+    def check_for_partition(self, database_name: str, table_name: str, expression: str) -> bool:
         """
         Checks whether a partition exists
 
         :param database_name: Name of hive database (schema) @table belongs to
-        :type database_name: str
         :param table_name: Name of hive table @partition belongs to
-        :type table_name: str
         :expression: Expression that matches the partitions to check for
             (eg `a = 'b' AND c = 'd'`)
-        :type expression: str
         :rtype: bool
 
-        >>> hook = AwsGlueCatalogHook()
+        >>> hook = GlueCatalogHook()
         >>> t = 'static_babynames_partitioned'
         >>> hook.check_for_partition('airflow', t, "ds='2015-01-01'")
         True
@@ -103,36 +95,46 @@ class AwsGlueCatalogHook(AwsBaseHook):
 
         return bool(partitions)
 
-    def get_table(self, database_name, table_name):
+    def get_table(self, database_name: str, table_name: str) -> dict:
         """
         Get the information of the table
 
         :param database_name: Name of hive database (schema) @table belongs to
-        :type database_name: str
         :param table_name: Name of hive table
-        :type table_name: str
         :rtype: dict
 
-        >>> hook = AwsGlueCatalogHook()
+        >>> hook = GlueCatalogHook()
         >>> r = hook.get_table('db', 'table_foo')
         >>> r['Name'] = 'table_foo'
         """
-
         result = self.get_conn().get_table(DatabaseName=database_name, Name=table_name)
 
         return result['Table']
 
-    def get_table_location(self, database_name, table_name):
+    def get_table_location(self, database_name: str, table_name: str) -> str:
         """
         Get the physical location of the table
 
         :param database_name: Name of hive database (schema) @table belongs to
-        :type database_name: str
         :param table_name: Name of hive table
-        :type table_name: str
         :return: str
         """
-
         table = self.get_table(database_name, table_name)
 
         return table['StorageDescriptor']['Location']
+
+
+class AwsGlueCatalogHook(GlueCatalogHook):
+    """
+    This hook is deprecated.
+    Please use :class:`airflow.providers.amazon.aws.hooks.glue_catalog.GlueCatalogHook`.
+    """
+
+    def __init__(self, *args, **kwargs):
+        warnings.warn(
+            "This hook is deprecated. "
+            "Please use :class:`airflow.providers.amazon.aws.hooks.glue_catalog.GlueCatalogHook`.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

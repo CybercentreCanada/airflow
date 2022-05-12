@@ -19,24 +19,19 @@
 """Example HTTP operator and sensor"""
 
 import json
-from datetime import timedelta
+from datetime import datetime
 
 from airflow import DAG
 from airflow.providers.http.operators.http import SimpleHttpOperator
 from airflow.providers.http.sensors.http import HttpSensor
-from airflow.utils.dates import days_ago
 
-default_args = {
-    'owner': 'airflow',
-    'depends_on_past': False,
-    'email': ['airflow@example.com'],
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=5),
-}
-
-dag = DAG('example_http_operator', default_args=default_args, tags=['example'], start_date=days_ago(2))
+dag = DAG(
+    'example_http_operator',
+    default_args={'retries': 1},
+    tags=['example'],
+    start_date=datetime(2021, 1, 1),
+    catchup=False,
+)
 
 dag.doc_md = __doc__
 
@@ -71,7 +66,7 @@ task_get_op = SimpleHttpOperator(
 )
 # [END howto_operator_http_task_get_op]
 # [START howto_operator_http_task_get_op_response_filter]
-task_get_op = SimpleHttpOperator(
+task_get_op_response_filter = SimpleHttpOperator(
     task_id='get_op_response_filter',
     method='GET',
     endpoint='get',
@@ -110,4 +105,5 @@ task_http_sensor_check = HttpSensor(
     dag=dag,
 )
 # [END howto_operator_http_http_sensor_check]
-task_http_sensor_check >> task_post_op >> task_get_op >> task_put_op >> task_del_op >> task_post_op_formenc
+task_http_sensor_check >> task_post_op >> task_get_op >> task_get_op_response_filter
+task_get_op_response_filter >> task_put_op >> task_del_op >> task_post_op_formenc

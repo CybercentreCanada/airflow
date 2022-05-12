@@ -17,12 +17,12 @@
 # under the License.
 
 """
-Example Airflow DAG that showss interactions with Google Cloud Firestore.
+Example Airflow DAG that shows interactions with Google Cloud Firestore.
 
 Prerequisites
 =============
 
-This example uses two GCP projects:
+This example uses two Google Cloud projects:
 
 * ``GCP_PROJECT_ID`` - It contains a bucket and a firestore database.
 * ``G_FIRESTORE_PROJECT_ID`` - it contains the Data Warehouse based on the BigQuery service.
@@ -34,9 +34,9 @@ The bucket and dataset should be located in the same region.
 
 If you want to run this example, you must do the following:
 
-1. Create GCP project and enable the BigQuery API
+1. Create Google Cloud project and enable the BigQuery API
 2. Create the Firebase project
-3. Create a bucket in the same location as the the Firebase project
+3. Create a bucket in the same location as the Firebase project
 4. Grant Firebase admin account permissions to manage BigQuery. This is required to create a dataset.
 5. Create a bucket in Firebase project and
 6. Give read/write access for Firebase admin to bucket to step no. 5.
@@ -44,20 +44,23 @@ If you want to run this example, you must do the following:
 """
 
 import os
+from datetime import datetime
 from urllib.parse import urlparse
 
 from airflow import models
+from airflow.models.baseoperator import chain
 from airflow.providers.google.cloud.operators.bigquery import (
-    BigQueryCreateEmptyDatasetOperator, BigQueryCreateExternalTableOperator, BigQueryDeleteDatasetOperator,
-    BigQueryExecuteQueryOperator,
+    BigQueryCreateEmptyDatasetOperator,
+    BigQueryCreateExternalTableOperator,
+    BigQueryDeleteDatasetOperator,
+    BigQueryInsertJobOperator,
 )
 from airflow.providers.google.firebase.operators.firestore import CloudFirestoreExportDatabaseOperator
-from airflow.utils import dates
 
 GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "example-gcp-project")
 FIRESTORE_PROJECT_ID = os.environ.get("G_FIRESTORE_PROJECT_ID", "example-firebase-project")
 
-EXPORT_DESTINATION_URL = os.environ.get("GCP_FIRESTORE_ARCHIVE_URL", "gs://airflow-firestore/namespace/")
+EXPORT_DESTINATION_URL = os.environ.get("GCP_FIRESTORE_ARCHIVE_URL", "gs://INVALID BUCKET NAME/namespace/")
 BUCKET_NAME = urlparse(EXPORT_DESTINATION_URL).hostname
 EXPORT_PREFIX = urlparse(EXPORT_DESTINATION_URL).path
 
@@ -70,8 +73,9 @@ if BUCKET_NAME is None:
 
 with models.DAG(
     "example_google_firestore",
-    default_args=dict(start_date=dates.days_ago(1)),
-    schedule_interval=None,
+    start_date=datetime(2021, 1, 1),
+    schedule_interval='@once',
+    catchup=False,
     tags=["example"],
 ) as dag:
     # [START howto_operator_export_database_to_gcs]
@@ -97,25 +101,43 @@ with models.DAG(
     create_external_table_multiple_types = BigQueryCreateExternalTableOperator(
         task_id="create_external_table",
         bucket=BUCKET_NAME,
-        source_objects=[
-            f"{EXPORT_PREFIX}/all_namespaces/kind_{EXPORT_COLLECTION_ID}"
-            f"/all_namespaces_kind_{EXPORT_COLLECTION_ID}.export_metadata"
-        ],
-        source_format="DATASTORE_BACKUP",
-        destination_project_dataset_table=f"{GCP_PROJECT_ID}.{DATASET_NAME}.firestore_data",
+        table_resource={
+            "tableReference": {
+                "projectId": GCP_PROJECT_ID,
+                "datasetId": DATASET_NAME,
+                "tableId": "firestore_data",
+            },
+            "schema": {
+                "fields": [
+                    {"name": "name", "type": "STRING"},
+                    {"name": "post_abbr", "type": "STRING"},
+                ]
+            },
+            "externalDataConfiguration": {
+                "sourceFormat": "DATASTORE_BACKUP",
+                "compression": "NONE",
+                "csvOptions": {"skipLeadingRows": 1},
+            },
+        },
     )
     # [END howto_operator_create_external_table_multiple_types]
 
-    read_data_from_gcs_multiple_types = BigQueryExecuteQueryOperator(
+    read_data_from_gcs_multiple_types = BigQueryInsertJobOperator(
         task_id="execute_query",
-        sql=f"SELECT COUNT(*) FROM `{GCP_PROJECT_ID}.{DATASET_NAME}.firestore_data`",
-        use_legacy_sql=False,
+        configuration={
+            "query": {
+                "query": f"SELECT COUNT(*) FROM `{GCP_PROJECT_ID}.{DATASET_NAME}.firestore_data`",
+                "useLegacySql": False,
+            }
+        },
     )
 
-    # Firestore
-    export_database_to_gcs >> create_dataset
-
-    # BigQuery
-    create_dataset >> create_external_table_multiple_types
-    create_external_table_multiple_types >> read_data_from_gcs_multiple_types
-    read_data_from_gcs_multiple_types >> delete_dataset
+    chain(
+        # Firestore
+        export_database_to_gcs,
+        # BigQuery
+        create_dataset,
+        create_external_table_multiple_types,
+        read_data_from_gcs_multiple_types,
+        delete_dataset,
+    )

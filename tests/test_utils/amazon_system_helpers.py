@@ -17,7 +17,7 @@
 
 import os
 from contextlib import contextmanager
-from typing import List
+from typing import List, Optional
 
 import pytest
 
@@ -25,16 +25,15 @@ from airflow.models import Connection
 from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
 from airflow.utils import db
 from tests.test_utils import AIRFLOW_MAIN_FOLDER
+from tests.test_utils.logging_command_executor import get_executor
 from tests.test_utils.system_tests_class import SystemTest
-from tests.utils.logging_command_executor import get_executor
 
-AWS_DAG_FOLDER = os.path.join(
-    AIRFLOW_MAIN_FOLDER, "airflow", "providers", "amazon", "aws", "example_dags"
-)
+AWS_DAG_FOLDER = os.path.join(AIRFLOW_MAIN_FOLDER, "airflow", "providers", "amazon", "aws", "example_dags")
+AWS_EKS_KEY = "aws_eks.json"
 
 
 @contextmanager
-def provide_aws_context():
+def provide_aws_context(key_file_path: Optional[str] = None):
     """
     Authenticates the context to be able use aws resources.
 
@@ -53,7 +52,6 @@ def provide_aws_s3_bucket(name):
 
 @pytest.mark.system("amazon")
 class AmazonSystemTest(SystemTest):
-
     @staticmethod
     def _region_name():
         return os.environ.get("REGION_NAME")
@@ -85,15 +83,12 @@ class AmazonSystemTest(SystemTest):
             executor.execute_cmd(cmd=cmd)
 
     @staticmethod
-    def create_connection(aws_conn_id: str,
-                          region: str) -> None:
+    def create_connection(aws_conn_id: str, region: str) -> None:
         """
         Create aws connection with region
 
         :param aws_conn_id: id of the aws connection to create
-        :type aws_conn_id: str
         :param region: aws region name to use in extra field of the aws connection
-        :type region: str
         """
         db.merge_conn(
             Connection(
@@ -137,17 +132,14 @@ class AmazonSystemTest(SystemTest):
         cls.execute_with_ctx(cmd)
 
     @staticmethod
-    def create_ecs_cluster(aws_conn_id: str,
-                           cluster_name: str) -> None:
+    def create_ecs_cluster(aws_conn_id: str, cluster_name: str) -> None:
         """
         Create ecs cluster with given name
 
         If specified cluster exists, it doesn't change and new cluster will not be created.
 
         :param aws_conn_id: id of the aws connection to use when creating boto3 client/resource
-        :type aws_conn_id: str
         :param cluster_name: name of the cluster to create in aws ecs
-        :type cluster_name: str
         """
         hook = AwsBaseHook(
             aws_conn_id=aws_conn_id,
@@ -174,15 +166,12 @@ class AmazonSystemTest(SystemTest):
         )
 
     @staticmethod
-    def delete_ecs_cluster(aws_conn_id: str,
-                           cluster_name: str) -> None:
+    def delete_ecs_cluster(aws_conn_id: str, cluster_name: str) -> None:
         """
         Delete ecs cluster with given short name or full Amazon Resource Name (ARN)
 
         :param aws_conn_id: id of the aws connection to use when creating boto3 client/resource
-        :type aws_conn_id: str
         :param cluster_name: name of the cluster to delete in aws ecs
-        :type cluster_name: str
         """
         hook = AwsBaseHook(
             aws_conn_id=aws_conn_id,
@@ -193,35 +182,29 @@ class AmazonSystemTest(SystemTest):
         )
 
     @staticmethod
-    def create_ecs_task_definition(aws_conn_id: str,
-                                   task_definition: str,
-                                   container: str,
-                                   image: str,
-                                   execution_role_arn: str,
-                                   awslogs_group: str,
-                                   awslogs_region: str,
-                                   awslogs_stream_prefix: str) -> None:
+    def create_ecs_task_definition(
+        aws_conn_id: str,
+        task_definition: str,
+        container: str,
+        image: str,
+        execution_role_arn: str,
+        awslogs_group: str,
+        awslogs_region: str,
+        awslogs_stream_prefix: str,
+    ) -> None:
         """
         Create ecs task definition with given name
 
         :param aws_conn_id: id of the aws connection to use when creating boto3 client/resource
-        :type aws_conn_id: str
         :param task_definition: family name for task definition to create in aws ecs
-        :type task_definition: str
         :param container: name of the container
-        :type container: str
         :param image: image used to start a container,
             format: `registry_id`.dkr.ecr.`region`.amazonaws.com/`repository_name`:`tag`
-        :type image: str
         :param execution_role_arn: task execution role that the Amazon ECS container agent can assume,
             format: arn:aws:iam::`registry_id`:role/`role_name`
-        :type execution_role_arn: str
         :param awslogs_group: awslogs group option in log configuration
-        :type awslogs_group: str
         :param awslogs_region: awslogs region option in log configuration
-        :type awslogs_region: str
         :param awslogs_stream_prefix: awslogs stream prefix option in log configuration
-        :type awslogs_stream_prefix: str
         """
         hook = AwsBaseHook(
             aws_conn_id=aws_conn_id,
@@ -256,15 +239,12 @@ class AmazonSystemTest(SystemTest):
         )
 
     @staticmethod
-    def delete_ecs_task_definition(aws_conn_id: str,
-                                   task_definition: str) -> None:
+    def delete_ecs_task_definition(aws_conn_id: str, task_definition: str) -> None:
         """
         Delete all revisions of given ecs task definition
 
         :param aws_conn_id: id of the aws connection to use when creating boto3 client/resource
-        :type aws_conn_id: str
         :param task_definition: family prefix for task definition to delete in aws ecs
-        :type task_definition: str
         """
         hook = AwsBaseHook(
             aws_conn_id=aws_conn_id,
@@ -283,15 +263,12 @@ class AmazonSystemTest(SystemTest):
             )
 
     @staticmethod
-    def is_ecs_task_definition_exists(aws_conn_id: str,
-                                      task_definition: str) -> bool:
+    def is_ecs_task_definition_exists(aws_conn_id: str, task_definition: str) -> bool:
         """
         Check whether given task definition exits in ecs
 
         :param aws_conn_id: id of the aws connection to use when creating boto3 client/resource
-        :type aws_conn_id: str
         :param task_definition: family prefix for task definition to check in aws ecs
-        :type task_definition: str
         """
         hook = AwsBaseHook(
             aws_conn_id=aws_conn_id,

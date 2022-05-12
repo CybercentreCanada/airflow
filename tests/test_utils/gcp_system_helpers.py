@@ -28,8 +28,8 @@ from google.auth.environment_vars import CLOUD_SDK_CONFIG_DIR, CREDENTIALS
 from airflow.providers.google.cloud.utils.credentials_provider import provide_gcp_conn_and_credentials
 from tests.providers.google.cloud.utils.gcp_authenticator import GCP_GCS_KEY, GCP_SECRET_MANAGER_KEY
 from tests.test_utils import AIRFLOW_MAIN_FOLDER
+from tests.test_utils.logging_command_executor import CommandExecutor
 from tests.test_utils.system_tests_class import SystemTest
-from tests.utils.logging_command_executor import get_executor
 
 CLOUD_DAG_FOLDER = os.path.join(
     AIRFLOW_MAIN_FOLDER, "airflow", "providers", "google", "cloud", "example_dags"
@@ -43,6 +43,9 @@ GSUITE_DAG_FOLDER = os.path.join(
 FIREBASE_DAG_FOLDER = os.path.join(
     AIRFLOW_MAIN_FOLDER, "airflow", "providers", "google", "firebase", "example_dags"
 )
+LEVELDB_DAG_FOLDER = os.path.join(
+    AIRFLOW_MAIN_FOLDER, "airflow", "providers", "google", "leveldb", "example_dags"
+)
 POSTGRES_LOCAL_EXECUTOR = os.path.join(
     AIRFLOW_MAIN_FOLDER, "tests", "test_utils", "postgres_local_executor.cfg"
 )
@@ -53,7 +56,6 @@ def resolve_full_gcp_key_path(key: str) -> str:
     Returns path full path to provided GCP key.
 
     :param key: Name of the GCP key, for example ``my_service.json``
-    :type key: str
     :returns: Full path to the key
     """
     path = os.environ.get("CREDENTIALS_DIR", "/files/airflow-breeze-config/keys")
@@ -79,31 +81,49 @@ def provide_gcp_context(
     as ``key_file_path``.
 
     :param key_file_path: Path to file with GCP credentials .json file.
-    :type key_file_path: str
     :param scopes: OAuth scopes for the connection
-    :type scopes: Sequence
     :param project_id: The id of GCP project for the connection.
-    :type project_id: str
+        Default: ``os.environ["GCP_PROJECT_ID"]`` or None
     """
     key_file_path = resolve_full_gcp_key_path(key_file_path)  # type: ignore
-    with provide_gcp_conn_and_credentials(key_file_path, scopes, project_id), \
-            tempfile.TemporaryDirectory() as gcloud_config_tmp, \
-            mock.patch.dict('os.environ', {CLOUD_SDK_CONFIG_DIR: gcloud_config_tmp}):
-        executor = get_executor()
+    if project_id is None:
+        project_id = os.environ.get("GCP_PROJECT_ID")
+    with provide_gcp_conn_and_credentials(
+        key_file_path, scopes, project_id
+    ), tempfile.TemporaryDirectory() as gcloud_config_tmp, mock.patch.dict(
+        'os.environ', {CLOUD_SDK_CONFIG_DIR: gcloud_config_tmp}
+    ):
+        executor = CommandExecutor()
 
-        if project_id:
-            executor.execute_cmd([
-                "gcloud", "config", "set", "core/project", project_id
-            ])
         if key_file_path:
-            executor.execute_cmd([
-                "gcloud", "auth", "activate-service-account", f"--key-file={key_file_path}",
-            ])
+            executor.execute_cmd(
+                [
+                    "gcloud",
+                    "auth",
+                    "activate-service-account",
+                    f"--key-file={key_file_path}",
+                ]
+            )
+        if project_id:
+            executor.execute_cmd(["gcloud", "config", "set", "core/project", project_id])
         yield
+
+
+@contextmanager
+@provide_gcp_context(GCP_GCS_KEY)
+def provide_gcs_bucket(bucket_name: str):
+    GoogleSystemTest.create_gcs_bucket(bucket_name)
+    yield
+    GoogleSystemTest.delete_gcs_bucket(bucket_name)
 
 
 @pytest.mark.system("google")
 class GoogleSystemTest(SystemTest):
+    @staticmethod
+    def execute_cmd(*args, **kwargs):
+        executor = CommandExecutor()
+        return executor.execute_cmd(*args, **kwargs)
+
     @staticmethod
     def _project_id():
         return os.environ.get("GCP_PROJECT_ID")
@@ -113,16 +133,16 @@ class GoogleSystemTest(SystemTest):
         return os.environ.get(CREDENTIALS)
 
     @classmethod
-    def execute_with_ctx(cls, cmd: List[str], key: str = GCP_GCS_KEY, project_id=None, scopes=None,
-                         silent: bool = False):
+    def execute_with_ctx(
+        cls, cmd: List[str], key: str = GCP_GCS_KEY, project_id=None, scopes=None, silent: bool = False
+    ):
         """
         Executes command with context created by provide_gcp_context and activated
         service key.
         """
-        executor = get_executor()
         current_project_id = project_id or cls._project_id()
         with provide_gcp_context(key, project_id=current_project_id, scopes=scopes):
-            executor.execute_cmd(cmd=cmd, silent=silent)
+            cls.execute_cmd(cmd=cmd, silent=silent)
 
     @classmethod
     def create_gcs_bucket(cls, name: str, location: Optional[str] = None) -> None:
@@ -141,19 +161,20 @@ class GoogleSystemTest(SystemTest):
 
     @classmethod
     def upload_to_gcs(cls, source_uri: str, target_uri: str):
-        cls.execute_with_ctx(
-            ["gsutil", "cp", source_uri, target_uri], key=GCP_GCS_KEY
-        )
+        cls.execute_with_ctx(["gsutil", "cp", source_uri, target_uri], key=GCP_GCS_KEY)
 
     @classmethod
     def upload_content_to_gcs(cls, lines: str, bucket: str, filename: str):
         bucket_name = f"gs://{bucket}" if not bucket.startswith("gs://") else bucket
         with TemporaryDirectory(prefix="airflow-gcp") as tmp_dir:
             tmp_path = os.path.join(tmp_dir, filename)
+            tmp_dir_path = os.path.dirname(tmp_path)
+            if tmp_dir_path:
+                os.makedirs(tmp_dir_path, exist_ok=True)
             with open(tmp_path, "w") as file:
                 file.writelines(lines)
                 file.flush()
-            os.chmod(tmp_path, 555)
+            os.chmod(tmp_path, 777)
             cls.upload_to_gcs(tmp_path, bucket_name)
 
     @classmethod
@@ -169,7 +190,7 @@ class GoogleSystemTest(SystemTest):
                 "gsutil",
                 "iam",
                 "ch",
-                "serviceAccount:%s:admin" % account_email,
+                f"serviceAccount:{account_email}:admin",
                 bucket_name,
             ]
         )
@@ -184,10 +205,18 @@ class GoogleSystemTest(SystemTest):
         with tempfile.NamedTemporaryFile() as tmp:
             tmp.write(value.encode("UTF-8"))
             tmp.flush()
-            cmd = ["gcloud", "secrets", "create", name,
-                   "--replication-policy", "automatic",
-                   "--project", GoogleSystemTest._project_id(),
-                   "--data-file", tmp.name]
+            cmd = [
+                "gcloud",
+                "secrets",
+                "create",
+                name,
+                "--replication-policy",
+                "automatic",
+                "--project",
+                GoogleSystemTest._project_id(),
+                "--data-file",
+                tmp.name,
+            ]
             cls.execute_with_ctx(cmd, key=GCP_SECRET_MANAGER_KEY)
 
     @classmethod
@@ -195,7 +224,15 @@ class GoogleSystemTest(SystemTest):
         with tempfile.NamedTemporaryFile() as tmp:
             tmp.write(value.encode("UTF-8"))
             tmp.flush()
-            cmd = ["gcloud", "secrets", "versions", "add", name,
-                   "--project", GoogleSystemTest._project_id(),
-                   "--data-file", tmp.name]
+            cmd = [
+                "gcloud",
+                "secrets",
+                "versions",
+                "add",
+                name,
+                "--project",
+                GoogleSystemTest._project_id(),
+                "--data-file",
+                tmp.name,
+            ]
             cls.execute_with_ctx(cmd, key=GCP_SECRET_MANAGER_KEY)

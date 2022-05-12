@@ -15,24 +15,24 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+"""This module is deprecated. Please use :mod:`airflow.operators.empty`."""
 
-from airflow.models import BaseOperator
-from airflow.utils.decorators import apply_defaults
+import warnings
+
+from airflow.operators.empty import EmptyOperator
+
+warnings.warn(
+    "This module is deprecated. Please use `airflow.operators.empty`.", DeprecationWarning, stacklevel=2
+)
 
 
-class DummyOperator(BaseOperator):
-    """
-    Operator that does literally nothing. It can be used to group tasks in a
-    DAG.
+class DummyOperator(EmptyOperator):
+    """This class is deprecated. Please use `airflow.operators.empty.EmptyOperator`."""
 
-    The task is evaluated by the scheduler but never processed by the executor.
-    """
-
-    ui_color = '#e8f7e4'
-
-    @apply_defaults
-    def __init__(self, **kwargs) -> None:
-        super().__init__(**kwargs)
-
-    def execute(self, context):
-        pass
+    def __init__(self, *args, **kwargs):
+        warnings.warn(
+            """This class is deprecated. Please use `airflow.operators.empty.EmptyOperator`.""",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

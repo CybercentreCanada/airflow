@@ -18,19 +18,20 @@
 
 """
 Example Airflow DAG that translates text in Google Cloud Translate
-service in the Google Cloud Platform.
+service in the Google Cloud.
 
 """
+from datetime import datetime
 
 from airflow import models
 from airflow.operators.bash import BashOperator
 from airflow.providers.google.cloud.operators.translate import CloudTranslateTextOperator
-from airflow.utils.dates import days_ago
 
 with models.DAG(
     'example_gcp_translate',
-    schedule_interval=None,  # Override to match your needs
-    start_date=days_ago(1),
+    schedule_interval='@once',  # Override to match your needs
+    start_date=datetime(2021, 1, 1),
+    catchup=False,
     tags=['example'],
 ) as dag:
     # [START howto_operator_translate_text]
@@ -45,8 +46,7 @@ with models.DAG(
     # [END howto_operator_translate_text]
     # [START howto_operator_translate_access]
     translation_access = BashOperator(
-        task_id='access',
-        bash_command="echo '{{ task_instance.xcom_pull(\"translate\")[0] }}'"
+        task_id='access', bash_command="echo '{{ task_instance.xcom_pull(\"translate\")[0] }}'"
     )
     product_set_create >> translation_access
     # [END howto_operator_translate_access]

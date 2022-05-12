@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 
-# pylint: disable=missing-docstring
+
 import logging
 
 from airflow.configuration import conf
@@ -43,7 +43,6 @@ def get_task_runner(local_task_job):
 
     :param local_task_job: The LocalTaskJob associated with the TaskInstance
         that needs to be executed.
-    :type local_task_job: airflow.jobs.local_task_job.LocalTaskJob
     :return: The task runner to use to run the task.
     :rtype: airflow.task.task_runner.base_task_runner.BaseTaskRunner
     """
@@ -56,7 +55,7 @@ def get_task_runner(local_task_job):
             task_runner_class = import_string(_TASK_RUNNER_NAME)
         except ImportError:
             raise AirflowConfigException(
-                f'The task runner could not be loaded. Please check "executor" key in "core" section. '
+                f'The task runner could not be loaded. Please check "task_runner" key in "core" section. '
                 f'Current value: "{_TASK_RUNNER_NAME}".'
             )
 
